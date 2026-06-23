@@ -10,18 +10,23 @@
     :root { --brand:#E8732B; --brand-dark:#cf6420; --bg:#fff7f1; --line:#f0d9c8; --text:#333; }
     * { box-sizing:border-box; }
     body { font-family:"Microsoft JhengHei","Segoe UI",sans-serif; margin:0; background:var(--bg); color:var(--text); }
-    header { background:var(--brand); color:#fff; padding:16px 20px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+    header { background:var(--brand); color:#fff; padding:14px 20px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
     header h1 { font-size:18px; margin:0; }
-    .userbox { font-size:14px; }
+    .userbox { font-size:14px; display:flex; align-items:center; gap:12px; }
+    .logout { background:rgba(255,255,255,.2); color:#fff; border:1px solid rgba(255,255,255,.5); border-radius:6px; padding:4px 12px; cursor:pointer; font-size:13px; }
+    .logout:hover { background:rgba(255,255,255,.35); }
     main { max-width:960px; margin:0 auto; padding:20px; }
     .tabs { display:flex; gap:8px; border-bottom:2px solid var(--line); margin-bottom:16px; flex-wrap:wrap; }
     .tab { padding:10px 16px; cursor:pointer; border:none; background:none; font-size:15px; color:#888; border-bottom:3px solid transparent; margin-bottom:-2px; }
     .tab.active { color:var(--brand-dark); border-bottom-color:var(--brand); font-weight:bold; }
+    .tab:disabled { color:#ccc; cursor:not-allowed; }
     .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:12px; }
     .card h3 { margin:0 0 6px; color:var(--brand-dark); }
     .meta { color:#777; font-size:14px; line-height:1.7; }
+    .notice { background:#fff3e0; border:1px solid #ffcc80; color:#b26a00; border-radius:8px; padding:12px 14px; margin-bottom:14px; font-size:14px; }
     button.action { background:var(--brand); color:#fff; border:none; border-radius:8px; padding:8px 16px; cursor:pointer; font-size:14px; }
     button.action:hover { background:var(--brand-dark); }
+    button.action:disabled { background:#e0b89a; cursor:not-allowed; }
     button.ghost { background:#fff; color:var(--brand-dark); border:1px solid var(--brand); border-radius:8px; padding:6px 12px; cursor:pointer; font-size:13px; }
     button.sm { padding:4px 10px; font-size:12px; border-radius:6px; }
     .status { display:inline-block; padding:2px 10px; border-radius:12px; font-size:13px; }
@@ -42,8 +47,6 @@
     .ok  { color:#1e7e34 !important; }
     .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:100; }
     .modal { background:#fff; border-radius:10px; padding:24px; width:340px; max-width:90%; }
-    .modal select { width:100%; padding:8px; margin:8px 0; border:1px solid #ccc; border-radius:6px; font-size:15px; }
-    /* 個人資料表單 */
     .form-table { width:100%; border-collapse:collapse; }
     .form-table td { border:none; padding:5px 0; vertical-align:middle; }
     .form-table td:first-child { color:#555; white-space:nowrap; padding-right:14px; font-size:14px; min-width:90px; }
@@ -51,7 +54,6 @@
     .finput:focus { outline:none; border-color:var(--brand); box-shadow:0 0 0 2px rgba(232,115,43,.15); }
     select.finput { background:#fff; cursor:pointer; }
     .req { color:#c0392b; }
-    /* 管理分頁 */
     .subtabs { display:flex; gap:6px; margin-bottom:12px; }
     .subtab { padding:7px 14px; border:1px solid var(--line); border-radius:8px; cursor:pointer; font-size:14px; background:#fff; color:#666; }
     .subtab.active { background:var(--brand); color:#fff; border-color:var(--brand); }
@@ -71,9 +73,9 @@
     </div>
     <div id="view-app" style="display:none;">
       <div class="tabs">
-        <button class="tab active" data-tab="courses">課程報名</button>
-        <button class="tab" data-tab="my">我的報名</button>
-        <button class="tab" data-tab="profile">個人資料</button>
+        <button class="tab active" data-tab="courses" id="tab-courses">課程報名</button>
+        <button class="tab" data-tab="my" id="tab-my">我的報名</button>
+        <button class="tab" data-tab="profile" id="tab-profile">個人資料</button>
         <button class="tab" data-tab="admin" id="tab-admin" style="display:none;">後台</button>
       </div>
       <div id="panel"></div>
@@ -92,6 +94,7 @@
 
   var ID_TOKEN = null;
   var CURRENT  = null;
+  var PROFILE_OK = false;   // 個人資料是否填完整
   var ADMIN_COURSE = '';
   var ADMIN_VIEW   = 'regs';
 
@@ -108,14 +111,39 @@
     ID_TOKEN = resp.credential;
     api('getCurrentUser').then(function(user) {
       CURRENT = user;
+      PROFILE_OK = !!user.profileComplete;
       document.getElementById('view-signin').style.display = 'none';
       document.getElementById('view-app').style.display = 'block';
-      document.getElementById('userbox').textContent = user.name + '（' + user.email + '）';
+      document.getElementById('userbox').innerHTML =
+        '<span>' + esc(user.name || user.email) + '</span>' +
+        '<button class="logout" onclick="logout()">登出</button>';
       if (user.isAdmin) document.getElementById('tab-admin').style.display = 'inline-block';
-      switchTab('courses');
+      applyProfileGate();
     }).catch(function(e) {
       document.getElementById('signin-err').textContent = '登入失敗：' + (e.message || e);
     });
+  }
+
+  // 個人資料未填完 → 鎖住其他分頁，強制停在個人資料
+  function applyProfileGate() {
+    var lock = !PROFILE_OK;
+    document.getElementById('tab-courses').disabled = lock;
+    document.getElementById('tab-my').disabled = lock;
+    document.getElementById('tab-admin').disabled = lock;
+    if (lock) switchTab('profile');
+    else switchTab('courses');
+  }
+
+  function logout() {
+    if (window.google && google.accounts && google.accounts.id) {
+      google.accounts.id.disableAutoSelect();
+    }
+    ID_TOKEN = null; CURRENT = null; PROFILE_OK = false;
+    document.getElementById('view-app').style.display = 'none';
+    document.getElementById('view-signin').style.display = 'block';
+    document.getElementById('signin-err').textContent = '';
+    document.getElementById('userbox').innerHTML = '';
+    document.getElementById('tab-admin').style.display = 'none';
   }
 
   window.onload = function() {
@@ -130,7 +158,7 @@
   };
 
   document.querySelectorAll('.tab').forEach(function(t) {
-    t.addEventListener('click', function() { switchTab(t.dataset.tab); });
+    t.addEventListener('click', function() { if (!t.disabled) switchTab(t.dataset.tab); });
   });
   function switchTab(name) {
     document.querySelectorAll('.tab').forEach(function(t) {
@@ -154,12 +182,13 @@
   function renderCourses() {
     loading();
     api('getOpenCourses').then(function(list) {
-      if (!list.length) { panel().innerHTML = '<div class="center">目前沒有開放報名的課程</div>'; return; }
-      panel().innerHTML = list.map(function(c) {
-        // 對象 badge
-        var badge = c.audience === '社工' ? '<span class="badge-sw">社工</span>'
-                  : c.audience === '老師' ? '<span class="badge-te">老師</span>' : '';
-        // 名額顯示
+      var head = '<p class="meta" style="margin-bottom:10px;">以下是開放給「<strong>' +
+        esc(list.length ? (list[0].myIdentity || '你的身份') : (CURRENT && CURRENT.identity || '你的身份')) +
+        '</strong>」的課程。</p>';
+      if (!list.length) { panel().innerHTML = '<div class="center">目前沒有開放給你報名的課程</div>'; return; }
+      panel().innerHTML = head + list.map(function(c) {
+        var badge = c.audience === '社工' ? '<span class="badge-sw">限社工</span>'
+                  : c.audience === '老師' ? '<span class="badge-te">限老師</span>' : '';
         var quota;
         if (c.swQuota > 0 || c.teQuota > 0) {
           quota = (c.swQuota > 0 ? '社工 ' + c.swCount + '/' + c.swQuota + ' 人　' : '') +
@@ -170,29 +199,25 @@
         return '<div class="card"><h3>' + esc(c.name) + badge + '</h3>' +
           '<div class="meta">場次：' + esc(c.session) + '<br>時間：' + esc(c.datetime) +
           '<br>地點：' + esc(c.place) + '<br>名額：' + quota + '</div>' +
-          '<p><button class="action" onclick="openRegister(\'' + esc(c.courseId) + '\',\'' +
-          esc(c.name) + '\',\'' + esc(c.audience) + '\')">我要報名</button></p></div>';
+          '<p><button class="action" onclick="confirmRegister(\'' + esc(c.courseId) + '\',\'' + esc(c.name) + '\')">我要報名</button></p></div>';
       }).join('');
     }).catch(showErr);
   }
 
-  function openRegister(courseId, courseName, audience) {
-    var opts = '';
-    if (audience === '全部' || audience === '社工') opts += '<option value="社工">社工</option>';
-    if (audience === '全部' || audience === '老師') opts += '<option value="老師">老師</option>';
-    document.getElementById('modal-title').textContent = '報名：' + courseName;
+  // 一鍵報名：身份從個人資料自動帶入，只需確認
+  function confirmRegister(courseId, courseName) {
+    document.getElementById('modal-title').textContent = '確認報名';
     document.getElementById('modal-body').innerHTML =
-      '<p style="margin:8px 0 4px;">請選擇你的身份：</p>' +
-      '<select id="m-identity">' + opts + '</select>' +
+      '<p style="margin:8px 0;">確定報名「<strong>' + esc(courseName) + '</strong>」？</p>' +
+      '<p class="hint">系統會以你個人資料的身份別送出，狀態為「待審核」。</p>' +
       '<p class="hint err" id="m-err"></p>' +
-      '<div style="text-align:right;margin-top:12px;">' +
+      '<div style="text-align:right;margin-top:8px;">' +
       '<button class="ghost" onclick="closeModal()">取消</button> ' +
       '<button class="action" id="m-ok">確認報名</button></div>';
     document.getElementById('modal').style.display = 'flex';
     document.getElementById('m-ok').onclick = function() {
-      var identity = document.getElementById('m-identity').value;
       this.disabled = true; this.textContent = '送出中…';
-      api('registerCourse', { courseId: courseId, identity: identity }).then(function() {
+      api('registerCourse', { courseId: courseId }).then(function() {
         closeModal();
         alert('報名成功！狀態為「待審核」，可到「我的報名」查看。');
         switchTab('my');
@@ -228,12 +253,15 @@
   function renderProfile() {
     loading();
     api('getMyProfile').then(function(p) {
-      panel().innerHTML =
+      var gate = !PROFILE_OK
+        ? '<div class="notice">首次使用請先完整填寫個人資料（標 <span class="req">*</span> 為必填），儲存後才能報名課程。</div>'
+        : '';
+      panel().innerHTML = gate +
         '<div class="card"><h3>個人基本資料</h3>' +
         '<p class="meta">登入帳號：<strong>' + esc(p.email) + '</strong>　累計記點：<strong>' + p.points + ' 點</strong></p>' +
         '<table class="form-table">' +
-        frow('姓名 <span class="req">*</span>',
-          '<input id="p-name" class="finput" value="' + esc(p.name) + '" maxlength="50">') +
+        frow('姓名 <span class="req">*</span>', '<input id="p-name" class="finput" value="' + esc(p.name) + '" maxlength="50">') +
+        frow('身份別 <span class="req">*</span>', fsel('p-identity', ['','社工','老師'], p.identity)) +
         frow('生理性別 <span class="req">*</span>', fsel('p-gender', ['','男','女','其他/不透漏'], p.gender)) +
         frow('身份證字號', '<input id="p-idNumber" class="finput" value="' + esc(p.idNumber) + '" maxlength="20" placeholder="A123456789">') +
         frow('手機電話 <span class="req">*</span>', '<input id="p-mobile" class="finput" value="' + esc(p.mobile) + '" maxlength="30" placeholder="0912345678">') +
@@ -244,16 +272,12 @@
         frow('積分需求', fsel('p-creditNeeded', ['','需要','不需要'], p.creditNeeded)) +
         frow('主責項目', '<input id="p-mainTask" class="finput" value="' + esc(p.mainTask) + '" maxlength="200" placeholder="例如：家防、兒少保護">') +
         '</table>' +
-        '<p style="margin-top:12px;">' +
-        '<button class="action" id="p-save" onclick="saveProfile()">儲存資料</button>' +
-        '　<span id="p-msg" class="hint"></span></p>' +
+        '<p style="margin-top:12px;"><button class="action" id="p-save" onclick="saveProfile()">儲存資料</button>　<span id="p-msg" class="hint"></span></p>' +
         '<p class="hint" style="color:#bbb;">資料儲存於主辦單位 Google Sheets，僅供課程管理使用。</p>' +
         '</div>';
     }).catch(showErr);
   }
-  function frow(label, input) {
-    return '<tr><td>' + label + '</td><td style="padding:4px 0;">' + input + '</td></tr>';
-  }
+  function frow(label, input) { return '<tr><td>' + label + '</td><td style="padding:4px 0;">' + input + '</td></tr>'; }
   function fsel(id, opts, cur) {
     return '<select id="' + id + '" class="finput">' +
       opts.map(function(o) {
@@ -261,32 +285,41 @@
       }).join('') + '</select>';
   }
   function saveProfile() {
-    var name = document.getElementById('p-name').value.trim();
-    var gender = document.getElementById('p-gender').value;
-    var mobile = document.getElementById('p-mobile').value.trim();
-    var org    = document.getElementById('p-org').value.trim();
-    var title  = document.getElementById('p-title').value.trim();
-    var msg    = document.getElementById('p-msg');
-    msg.className = 'hint err'; msg.textContent = '';
-    if (!name)   { msg.textContent = '姓名為必填'; return; }
-    if (!gender) { msg.textContent = '生理性別為必填'; return; }
-    if (!mobile) { msg.textContent = '手機電話為必填'; return; }
-    if (!org)    { msg.textContent = '單位名稱為必填'; return; }
-    if (!title)  { msg.textContent = '職稱為必填'; return; }
+    var v = {
+      name:        document.getElementById('p-name').value.trim(),
+      identity:    document.getElementById('p-identity').value,
+      gender:      document.getElementById('p-gender').value,
+      idNumber:    document.getElementById('p-idNumber').value.trim(),
+      mobile:      document.getElementById('p-mobile').value.trim(),
+      officePhone: document.getElementById('p-officePhone').value.trim(),
+      meal:        document.getElementById('p-meal').value,
+      org:         document.getElementById('p-org').value.trim(),
+      title:       document.getElementById('p-title').value.trim(),
+      creditNeeded:document.getElementById('p-creditNeeded').value,
+      mainTask:    document.getElementById('p-mainTask').value.trim()
+    };
+    var msg = document.getElementById('p-msg');
+    msg.className = 'hint err';
+    if (!v.name)     { msg.textContent = '姓名為必填'; return; }
+    if (!v.identity) { msg.textContent = '身份別為必填'; return; }
+    if (!v.gender)   { msg.textContent = '生理性別為必填'; return; }
+    if (!v.mobile)   { msg.textContent = '手機電話為必填'; return; }
+    if (!v.org)      { msg.textContent = '單位名稱為必填'; return; }
+    if (!v.title)    { msg.textContent = '職稱為必填'; return; }
+
     var btn = document.getElementById('p-save');
     btn.disabled = true; btn.textContent = '儲存中…';
-    api('updateMyProfile', {
-      name: name, gender: gender,
-      idNumber:     document.getElementById('p-idNumber').value.trim(),
-      mobile:       mobile,
-      officePhone:  document.getElementById('p-officePhone').value.trim(),
-      meal:         document.getElementById('p-meal').value,
-      org: org, title: title,
-      creditNeeded: document.getElementById('p-creditNeeded').value,
-      mainTask:     document.getElementById('p-mainTask').value.trim()
-    }).then(function() {
+    api('updateMyProfile', v).then(function() {
       msg.className = 'hint ok'; msg.textContent = '已儲存！';
       btn.disabled = false; btn.textContent = '儲存資料';
+      var firstTime = !PROFILE_OK;
+      PROFILE_OK = true;
+      // 解鎖分頁
+      document.getElementById('tab-courses').disabled = false;
+      document.getElementById('tab-my').disabled = false;
+      document.getElementById('tab-admin').disabled = false;
+      if (CURRENT) CURRENT.identity = v.identity;
+      if (firstTime) { setTimeout(function() { switchTab('courses'); }, 600); }
     }).catch(function(e) {
       msg.className = 'hint err'; msg.textContent = e.message || e;
       btn.disabled = false; btn.textContent = '儲存資料';
@@ -307,27 +340,19 @@
         '<div class="subtabs">' +
         '<button class="subtab active" id="btn-regs" onclick="setAdminView(\'regs\')">報名名單</button>' +
         '<button class="subtab" id="btn-att" onclick="setAdminView(\'attendance\')">登記出勤</button>' +
-        '</div>' +
-        '<div id="adm-content"></div>';
-      ADMIN_COURSE = '';
-      ADMIN_VIEW = 'regs';
+        '</div><div id="adm-content"></div>';
+      ADMIN_COURSE = ''; ADMIN_VIEW = 'regs';
       loadAdminView();
     }).catch(showErr);
   }
-  function onAdminCourseChange() {
-    ADMIN_COURSE = document.getElementById('adm-course').value;
-    loadAdminView();
-  }
+  function onAdminCourseChange() { ADMIN_COURSE = document.getElementById('adm-course').value; loadAdminView(); }
   function setAdminView(view) {
     ADMIN_VIEW = view;
     document.getElementById('btn-regs').classList.toggle('active', view === 'regs');
     document.getElementById('btn-att').classList.toggle('active', view === 'attendance');
     loadAdminView();
   }
-  function loadAdminView() {
-    if (ADMIN_VIEW === 'regs') loadAdminRegs();
-    else loadAdminAttendance();
-  }
+  function loadAdminView() { if (ADMIN_VIEW === 'regs') loadAdminRegs(); else loadAdminAttendance(); }
 
   function loadAdminRegs() {
     var ct = document.getElementById('adm-content');
@@ -336,12 +361,11 @@
       if (!list.length) { ct.innerHTML = '<div class="center">沒有報名資料</div>'; return; }
       var rows = list.map(function(r) {
         var btns = '';
-        if (r.status !== '錄取')  btns += '<button class="action sm" style="margin:2px;" onclick="updateReg(\'' + esc(r.regId) + '\',\'錄取\')">錄取</button>';
-        if (r.status !== '候補')  btns += '<button class="ghost sm" style="margin:2px;" onclick="updateReg(\'' + esc(r.regId) + '\',\'候補\')">候補</button>';
-        if (r.status !== '婉拒')  btns += '<button class="ghost sm" style="margin:2px;color:#999;border-color:#ddd;" onclick="updateReg(\'' + esc(r.regId) + '\',\'婉拒\')">婉拒</button>';
-        return '<tr><td>' + esc(r.name) + '</td><td>' + esc(r.email) + '</td>' +
-          '<td>' + esc(r.phone) + '</td><td>' + esc(r.identity) + '</td>' +
-          '<td>' + esc(r.points) + '</td><td>' + esc(r.regTime) + '</td>' +
+        if (r.status !== '錄取') btns += '<button class="action sm" style="margin:2px;" onclick="updateReg(\'' + esc(r.regId) + '\',\'錄取\')">錄取</button>';
+        if (r.status !== '候補') btns += '<button class="ghost sm" style="margin:2px;" onclick="updateReg(\'' + esc(r.regId) + '\',\'候補\')">候補</button>';
+        if (r.status !== '婉拒') btns += '<button class="ghost sm" style="margin:2px;color:#999;border-color:#ddd;" onclick="updateReg(\'' + esc(r.regId) + '\',\'婉拒\')">婉拒</button>';
+        return '<tr><td>' + esc(r.name) + '</td><td>' + esc(r.email) + '</td><td>' + esc(r.phone) + '</td>' +
+          '<td>' + esc(r.identity) + '</td><td>' + esc(r.points) + '</td><td>' + esc(r.regTime) + '</td>' +
           '<td><span class="status s-' + esc(r.status) + '">' + esc(r.status) + '</span></td>' +
           '<td style="white-space:nowrap;">' + btns + '</td></tr>';
       }).join('');
@@ -349,9 +373,8 @@
     }).catch(function(e) { document.getElementById('adm-content').innerHTML = '<div class="center err">錯誤：' + esc(e.message) + '</div>'; });
   }
   function updateReg(regId, status) {
-    api('adminUpdateRegistration', { regId: regId, status: status }).then(function() {
-      loadAdminRegs();
-    }).catch(function(e) { alert('錯誤：' + (e.message || e)); });
+    api('adminUpdateRegistration', { regId: regId, status: status }).then(loadAdminRegs)
+      .catch(function(e) { alert('錯誤：' + (e.message || e)); });
   }
 
   function loadAdminAttendance() {
@@ -369,18 +392,17 @@
       var POINT_LABEL = { '出席':'0點','事前請假':'0點','臨時請假':'+1點','缺席':'+2點' };
       var rows = active.map(function(r) {
         var cur = attMap[(r.email || '').toLowerCase()] || '出席';
-        var selOpts = ATT_OPTS.map(function(o) {
+        var sel = ATT_OPTS.map(function(o) {
           return '<option value="' + o + '"' + (cur === o ? ' selected' : '') + '>' + o + '（' + POINT_LABEL[o] + '）</option>';
         }).join('');
         return '<tr data-regid="' + esc(r.regId) + '" data-email="' + esc(r.email) + '" data-courseid="' + esc(ADMIN_COURSE) + '">' +
           '<td>' + esc(r.name) + '</td><td>' + esc(r.email) + '</td><td>' + esc(r.identity) + '</td>' +
-          '<td><select class="att-sel" style="padding:5px;border:1px solid #ccc;border-radius:6px;">' + selOpts + '</select></td></tr>';
+          '<td><select class="att-sel" style="padding:5px;border:1px solid #ccc;border-radius:6px;">' + sel + '</select></td></tr>';
       }).join('');
       ct.innerHTML =
-        '<p class="hint">記點規則：臨時請假（課前3日內）+1點，缺席+2點，出席/事前請假不計點。<br>重複送出會以最新紀錄覆蓋（差值補正）。</p>' +
+        '<p class="hint">記點規則：臨時請假（課前3日內）+1點，缺席+2點，出席/事前請假不計點。重複送出會以最新紀錄覆蓋（差值補正）。</p>' +
         '<table><tr><th>姓名</th><th>Email</th><th>身份</th><th>出席狀態</th></tr>' + rows + '</table>' +
-        '<p style="margin-top:14px;"><button class="action" id="att-btn" onclick="submitAttendance()">送出出勤紀錄</button>' +
-        '　<span id="att-msg" class="hint"></span></p>';
+        '<p style="margin-top:14px;"><button class="action" id="att-btn" onclick="submitAttendance()">送出出勤紀錄</button>　<span id="att-msg" class="hint"></span></p>';
     }).catch(function(e) { ct.innerHTML = '<div class="center err">錯誤：' + esc(e.message) + '</div>'; });
   }
   function submitAttendance() {
@@ -388,14 +410,11 @@
     var records = [];
     rows.forEach(function(tr) {
       records.push({
-        regId:       tr.dataset.regid,
-        email:       tr.dataset.email,
-        courseId:    tr.dataset.courseid,
-        attendStatus: tr.querySelector('.att-sel').value
+        regId: tr.dataset.regid, email: tr.dataset.email,
+        courseId: tr.dataset.courseid, attendStatus: tr.querySelector('.att-sel').value
       });
     });
-    var btn = document.getElementById('att-btn');
-    var msg = document.getElementById('att-msg');
+    var btn = document.getElementById('att-btn'), msg = document.getElementById('att-msg');
     btn.disabled = true; btn.textContent = '送出中…';
     api('recordAttendance', { records: records }).then(function(result) {
       msg.className = 'hint ok'; msg.textContent = '已登記 ' + result.recorded + ' 筆！';
