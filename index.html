@@ -201,16 +201,16 @@
   }
   function paintCourses(list) {
     var head = '<p class="meta" style="margin-bottom:10px;">以下是開放給「<strong>' +
-      esc(list.length ? (list[0].myIdentity || '你的身份') : (CURRENT && CURRENT.identity || '你的身份')) +
+      esc(list.length ? (list[0].myIdentity || '你的領域') : (CURRENT && CURRENT.identity || '你的領域')) +
       '</strong>」的課程。</p>';
     if (!list.length) { panel().innerHTML = '<div class="center">目前沒有開放給你報名的課程</div>'; return; }
     panel().innerHTML = head + list.map(function(c) {
-      var badge = c.audience === '社工' ? '<span class="badge-sw">限社工</span>'
-                : c.audience === '老師' ? '<span class="badge-te">限老師</span>' : '';
+      var badge = c.audience === '社政' ? '<span class="badge-sw">限社政</span>'
+                : c.audience === '教育' ? '<span class="badge-te">限教育</span>' : '';
       var quota;
       if (c.swQuota > 0 || c.teQuota > 0) {
-        quota = (c.swQuota > 0 ? '社工 ' + c.swCount + '/' + c.swQuota + ' 人　' : '') +
-                (c.teQuota > 0 ? '老師 ' + c.teCount + '/' + c.teQuota + ' 人' : '');
+        quota = (c.swQuota > 0 ? '社政 ' + c.swCount + '/' + c.swQuota + ' 人　' : '') +
+                (c.teQuota > 0 ? '教育 ' + c.teCount + '/' + c.teQuota + ' 人' : '');
       } else {
         quota = '已報名 ' + c.total + (c.capacity > 0 ? ' / ' + c.capacity : '') + ' 人';
       }
@@ -227,7 +227,7 @@
     document.getElementById('modal-title').textContent = '確認報名';
     document.getElementById('modal-body').innerHTML =
       '<p style="margin:8px 0;">確定報名「<strong>' + esc(courseName) + '</strong>」？</p>' +
-      '<p class="hint">系統會以你個人資料的身份別送出，狀態為「待審核」。</p>' +
+      '<p class="hint">系統會以你個人資料的服務領域送出。</p>' +
       '<p class="hint err" id="m-err"></p>' +
       '<div style="text-align:right;margin-top:8px;">' +
       '<button class="ghost" onclick="closeModal()">取消</button> ' +
@@ -264,7 +264,7 @@
         var cancelBtn = (r.status === '待審核' || r.status === '候補')
           ? '<button class="ghost sm" onclick="cancelReg(\'' + esc(r.regId) + '\')">取消報名</button>' : '';
         return '<div class="card"><h3>' + esc(r.courseName) + '</h3>' +
-          '<div class="meta">時間：' + esc(r.datetime) + '　身份別：' + esc(r.identity || '—') +
+          '<div class="meta">時間：' + esc(r.datetime) + '　服務領域：' + esc(r.identity || '—') +
           '<br>報名時間：' + esc(r.regTime) + '</div>' +
           '<p><span class="status s-' + esc(r.status) + '">' + esc(r.status) + '</span> ' + cancelBtn + '</p></div>';
       }).join('');
@@ -295,29 +295,70 @@
       paintProfile(p);
     }).catch(showErr);
   }
+
+  // 預設顯示唯讀預覽；資料未填完則直接進編輯
   function paintProfile(p) {
-      var gate = !PROFILE_OK
-        ? '<div class="notice">首次使用請先完整填寫個人資料（標 <span class="req">*</span> 為必填），儲存後才能報名課程。</div>'
-        : '';
-      panel().innerHTML = gate +
-        '<div class="card"><h3>個人基本資料</h3>' +
-        '<p class="meta">登入帳號：<strong>' + esc(p.email) + '</strong>　累計記點：<strong>' + p.points + ' 點</strong></p>' +
-        '<table class="form-table">' +
-        frow('姓名 <span class="req">*</span>', '<input id="p-name" class="finput" value="' + esc(p.name) + '" maxlength="50">') +
-        frow('身份別 <span class="req">*</span>', fsel('p-identity', ['','社工','老師'], p.identity)) +
-        frow('生理性別 <span class="req">*</span>', fsel('p-gender', ['','男','女','其他/不透漏'], p.gender)) +
-        frow('身份證字號', '<input id="p-idNumber" class="finput" value="' + esc(p.idNumber) + '" maxlength="20" placeholder="A123456789">') +
-        frow('手機電話 <span class="req">*</span>', '<input id="p-mobile" class="finput" value="' + esc(p.mobile) + '" maxlength="30" placeholder="0912345678">') +
-        frow('辦公室電話', '<input id="p-officePhone" class="finput" value="' + esc(p.officePhone) + '" maxlength="30">') +
-        frow('餐食選擇', fsel('p-meal', ['','葷食','素食','清真','不需要'], p.meal)) +
-        frow('單位名稱 <span class="req">*</span>', '<input id="p-org" class="finput" value="' + esc(p.org) + '" maxlength="100">') +
-        frow('職稱 <span class="req">*</span>', '<input id="p-title" class="finput" value="' + esc(p.title) + '" maxlength="50">') +
-        frow('積分需求', fsel('p-creditNeeded', ['','需要','不需要'], p.creditNeeded)) +
-        frow('主責項目', '<input id="p-mainTask" class="finput" value="' + esc(p.mainTask) + '" maxlength="200" placeholder="例如：家防、兒少保護">') +
-        '</table>' +
-        '<p style="margin-top:12px;"><button class="action" id="p-save" onclick="saveProfile()">儲存資料</button>　<span id="p-msg" class="hint"></span></p>' +
-        '<p class="hint" style="color:#bbb;">資料儲存於主辦單位 Google Sheets，僅供課程管理使用。</p>' +
-        '</div>';
+    if (!PROFILE_OK) { editProfile(p); return; }
+    var social = p.identity === '社政'
+      ? prow('社工師繼續教育積分', p.creditNeeded) + prow('主責項目', p.mainTask)
+      : '';
+    panel().innerHTML =
+      '<div class="card">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+      '<h3 style="margin:0;">個人基本資料</h3>' +
+      '<button class="ghost" onclick="editProfileFromCache()">編輯</button></div>' +
+      '<p class="meta" style="margin:8px 0;">登入帳號：<strong>' + esc(p.email) + '</strong>　累計記點：<strong>' + p.points + ' 點</strong></p>' +
+      '<table class="form-table">' +
+      prow('姓名', p.name) + prow('服務領域', p.identity) + prow('生理性別', p.gender) +
+      prow('身份證字號', p.idNumber) + prow('聯絡信箱', p.contactEmail) +
+      prow('手機電話', p.mobile) + prow('辦公室電話', p.officePhone) +
+      prow('餐食選擇', p.meal) + prow('單位名稱', p.org) + prow('職稱', p.title) +
+      social +
+      '</table></div>';
+  }
+  function prow(label, val) {
+    return '<tr><td>' + esc(label) + '</td><td style="padding:5px 0;"><strong>' + (val ? esc(val) : '—') + '</strong></td></tr>';
+  }
+  function editProfileFromCache() { editProfile(CACHE.profile || {}); }
+
+  // 編輯模式表單
+  function editProfile(p) {
+    p = p || {};
+    var gate = !PROFILE_OK
+      ? '<div class="notice">首次使用請先完整填寫個人資料（全部必填），儲存後才能報名課程。</div>'
+      : '';
+    var mainTaskOpts = ['','一般性社工','保護性社工-家庭暴力防治','保護性社工-兒少保護','保護性社工-性侵害防治'];
+    panel().innerHTML = gate +
+      '<div class="card"><h3>編輯個人基本資料</h3>' +
+      '<p class="meta">登入帳號：<strong>' + esc(p.email || (CURRENT && CURRENT.email) || '') + '</strong>（不可更改）</p>' +
+      '<table class="form-table">' +
+      frow('姓名 <span class="req">*</span>', '<input id="p-name" class="finput" value="' + esc(p.name) + '" maxlength="50">') +
+      frow('服務領域 <span class="req">*</span>', '<select id="p-identity" class="finput" onchange="toggleSocialFields()">' +
+        ['','社政','教育'].map(function(o){ return '<option value="'+esc(o)+'"'+(p.identity===o?' selected':'')+'>'+esc(o||'請選擇')+'</option>'; }).join('') + '</select>') +
+      frow('生理性別 <span class="req">*</span>', fsel('p-gender', ['','男','女','其他/不透漏'], p.gender)) +
+      frow('身份證字號 <span class="req">*</span>', '<input id="p-idNumber" class="finput" value="' + esc(p.idNumber) + '" maxlength="20" placeholder="A123456789">') +
+      frow('聯絡信箱 <span class="req">*</span>', '<input id="p-contactEmail" class="finput" type="email" value="' + esc(p.contactEmail) + '" maxlength="80" placeholder="常用信箱，可與登入帳號不同">') +
+      frow('手機電話 <span class="req">*</span>', '<input id="p-mobile" class="finput" value="' + esc(p.mobile) + '" maxlength="30" placeholder="0912345678">') +
+      frow('辦公室電話 <span class="req">*</span>', '<input id="p-officePhone" class="finput" value="' + esc(p.officePhone) + '" maxlength="30" placeholder="03-1234567">') +
+      frow('餐食選擇 <span class="req">*</span>', fsel('p-meal', ['','葷食','素食'], p.meal)) +
+      frow('單位名稱 <span class="req">*</span>', '<input id="p-org" class="finput" value="' + esc(p.org) + '" maxlength="100">') +
+      frow('職稱 <span class="req">*</span>', '<input id="p-title" class="finput" value="' + esc(p.title) + '" maxlength="50">') +
+      '</table>' +
+      '<div id="p-social-fields" style="display:none;"><table class="form-table">' +
+      frow('社工師繼續教育積分 <span class="req">*</span>', fsel('p-creditNeeded', ['','需要','不需要'], p.creditNeeded)) +
+      frow('主責項目 <span class="req">*</span>', fsel('p-mainTask', mainTaskOpts, p.mainTask)) +
+      '</table></div>' +
+      '<p style="margin-top:12px;"><button class="action" id="p-save" onclick="saveProfile()">儲存資料</button>' +
+      (PROFILE_OK ? ' <button class="ghost" onclick="renderProfile()">取消</button>' : '') +
+      '　<span id="p-msg" class="hint"></span></p>' +
+      '<p class="hint" style="color:#bbb;">資料儲存於主辦單位 Google Sheets，僅供課程管理使用。</p>' +
+      '</div>';
+    toggleSocialFields();
+  }
+  // 服務領域=社政才顯示積分與主責項目
+  function toggleSocialFields() {
+    var box = document.getElementById('p-social-fields');
+    if (box) box.style.display = (document.getElementById('p-identity').value === '社政') ? '' : 'none';
   }
   function frow(label, input) { return '<tr><td>' + label + '</td><td style="padding:4px 0;">' + input + '</td></tr>'; }
   function fsel(id, opts, cur) {
@@ -327,48 +368,58 @@
       }).join('') + '</select>';
   }
   function saveProfile() {
+    var isSocial = document.getElementById('p-identity').value === '社政';
     var v = {
-      name:        document.getElementById('p-name').value.trim(),
-      identity:    document.getElementById('p-identity').value,
-      gender:      document.getElementById('p-gender').value,
-      idNumber:    document.getElementById('p-idNumber').value.trim(),
-      mobile:      document.getElementById('p-mobile').value.trim(),
-      officePhone: document.getElementById('p-officePhone').value.trim(),
-      meal:        document.getElementById('p-meal').value,
-      org:         document.getElementById('p-org').value.trim(),
-      title:       document.getElementById('p-title').value.trim(),
-      creditNeeded:document.getElementById('p-creditNeeded').value,
-      mainTask:    document.getElementById('p-mainTask').value.trim()
+      name:         document.getElementById('p-name').value.trim(),
+      identity:     document.getElementById('p-identity').value,
+      gender:       document.getElementById('p-gender').value,
+      idNumber:     document.getElementById('p-idNumber').value.trim(),
+      contactEmail: document.getElementById('p-contactEmail').value.trim(),
+      mobile:       document.getElementById('p-mobile').value.trim(),
+      officePhone:  document.getElementById('p-officePhone').value.trim(),
+      meal:         document.getElementById('p-meal').value,
+      org:          document.getElementById('p-org').value.trim(),
+      title:        document.getElementById('p-title').value.trim(),
+      creditNeeded: isSocial ? document.getElementById('p-creditNeeded').value : '',
+      mainTask:     isSocial ? document.getElementById('p-mainTask').value : ''
     };
     var msg = document.getElementById('p-msg');
     msg.className = 'hint err';
-    if (!v.name)     { msg.textContent = '姓名為必填'; return; }
-    if (!v.identity) { msg.textContent = '身份別為必填'; return; }
-    if (!v.gender)   { msg.textContent = '生理性別為必填'; return; }
-    if (!v.mobile)   { msg.textContent = '手機電話為必填'; return; }
-    if (!v.org)      { msg.textContent = '單位名稱為必填'; return; }
-    if (!v.title)    { msg.textContent = '職稱為必填'; return; }
+    if (!v.name)         { msg.textContent = '姓名為必填'; return; }
+    if (!v.identity)     { msg.textContent = '服務領域為必填'; return; }
+    if (!v.gender)       { msg.textContent = '生理性別為必填'; return; }
+    if (!v.idNumber)     { msg.textContent = '身份證字號為必填'; return; }
+    if (!v.contactEmail) { msg.textContent = '聯絡信箱為必填'; return; }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.contactEmail)) { msg.textContent = '聯絡信箱格式不正確'; return; }
+    if (!v.mobile)       { msg.textContent = '手機電話為必填'; return; }
+    if (!v.officePhone)  { msg.textContent = '辦公室電話為必填'; return; }
+    if (!v.meal)         { msg.textContent = '餐食選擇為必填'; return; }
+    if (!v.org)          { msg.textContent = '單位名稱為必填'; return; }
+    if (!v.title)        { msg.textContent = '職稱為必填'; return; }
+    if (isSocial && !v.creditNeeded) { msg.textContent = '社工師繼續教育積分為必填'; return; }
+    if (isSocial && !v.mainTask)     { msg.textContent = '主責項目為必填'; return; }
 
     var btn = document.getElementById('p-save');
     btn.disabled = true; btn.textContent = '儲存中…';
     api('updateMyProfile', v).then(function() {
-      msg.className = 'hint ok'; msg.textContent = '已儲存！';
-      btn.disabled = false; btn.textContent = '儲存資料';
       var firstTime = !PROFILE_OK;
       PROFILE_OK = true;
-      // 更新快取：保留累計記點，套用剛存的欄位；身份別可能變 → 課程清單失效
+      // 更新快取（保留累計記點）；服務領域可能變 → 課程清單失效
       var pts = CACHE.profile ? CACHE.profile.points : 0;
-      CACHE.profile = { email: (CACHE.profile && CACHE.profile.email) || (CURRENT && CURRENT.email) || '',
+      CACHE.profile = {
+        email: (CACHE.profile && CACHE.profile.email) || (CURRENT && CURRENT.email) || '',
         name: v.name, identity: v.identity, gender: v.gender, idNumber: v.idNumber,
-        mobile: v.mobile, officePhone: v.officePhone, meal: v.meal, org: v.org,
-        title: v.title, creditNeeded: v.creditNeeded, mainTask: v.mainTask, points: pts };
+        contactEmail: v.contactEmail, mobile: v.mobile, officePhone: v.officePhone,
+        meal: v.meal, org: v.org, title: v.title,
+        creditNeeded: v.creditNeeded, mainTask: v.mainTask, points: pts
+      };
       CACHE.openCourses = null;
-      // 解鎖分頁
       document.getElementById('tab-courses').disabled = false;
       document.getElementById('tab-my').disabled = false;
       document.getElementById('tab-admin').disabled = false;
       if (CURRENT) CURRENT.identity = v.identity;
-      if (firstTime) { setTimeout(function() { switchTab('courses'); }, 600); }
+      if (firstTime) setTimeout(function() { switchTab('courses'); }, 400);
+      else renderProfile(); // 回到唯讀預覽
     }).catch(function(e) {
       msg.className = 'hint err'; msg.textContent = e.message || e;
       btn.disabled = false; btn.textContent = '儲存資料';
@@ -435,7 +486,7 @@
           '<td><span class="status s-' + esc(r.status) + '">' + esc(r.status) + '</span></td>' +
           '<td style="white-space:nowrap;">' + btns + '</td></tr>';
       }).join('');
-      ct.innerHTML = '<table><tr><th>課程代號</th><th>課程名稱</th><th>課程日期</th><th>姓名</th><th>Email</th><th>電話</th><th>身份</th><th>記點</th><th>報名時間</th><th>狀態</th><th>操作</th></tr>' + rows + '</table>';
+      ct.innerHTML = '<table><tr><th>課程代號</th><th>課程名稱</th><th>課程日期</th><th>姓名</th><th>Email</th><th>電話</th><th>領域</th><th>記點</th><th>報名時間</th><th>狀態</th><th>操作</th></tr>' + rows + '</table>';
     }).catch(function(e) { document.getElementById('adm-content').innerHTML = '<div class="center err">錯誤：' + esc(e.message) + '</div>'; });
   }
   function updateReg(regId, status) {
@@ -467,7 +518,7 @@
       }).join('');
       ct.innerHTML =
         '<p class="hint">記點規則：臨時請假（課前3日內）+1點，缺席+2點，出席/事前請假不計點。重複送出會以最新紀錄覆蓋（差值補正）。</p>' +
-        '<table><tr><th>姓名</th><th>Email</th><th>身份</th><th>出席狀態</th></tr>' + rows + '</table>' +
+        '<table><tr><th>姓名</th><th>Email</th><th>領域</th><th>出席狀態</th></tr>' + rows + '</table>' +
         '<p style="margin-top:14px;"><button class="action" id="att-btn" onclick="submitAttendance()">送出出勤紀錄</button>　<span id="att-msg" class="hint"></span></p>';
     }).catch(function(e) { ct.innerHTML = '<div class="center err">錯誤：' + esc(e.message) + '</div>'; });
   }
@@ -518,7 +569,7 @@
         ? '<span class="status s-錄取">開放</span>'
         : '<span class="status s-取消">關閉</span>';
       var quota = (c.swQuota || c.teQuota)
-        ? '社工 ' + c.swQuota + '　老師 ' + c.teQuota
+        ? '社政 ' + c.swQuota + '<br>教育 ' + c.teQuota
         : (c.capacity || '—');
       var toggleLabel = c.status === '開放' ? '關閉' : '開放';
       return '<tr><td>' + esc(c.courseId) + '</td><td class="cname">' + esc(c.name) + '</td><td>' + esc(c.session) + '</td>' +
@@ -569,9 +620,9 @@
       frow('課程時間', '<input id="c-time" class="finput" value="' + esc(c ? extractTime_(c.datetime) : '') + '" maxlength="30" placeholder="09:00-12:00">') +
       frow('地點', '<input id="c-place" class="finput" value="' + esc(c ? c.place : '') + '" maxlength="100">') +
       frow('名額上限', '<input id="c-capacity" type="number" min="0" class="finput" value="' + esc(c ? c.capacity : 30) + '">') +
-      frow('開放對象', fsel('c-audience', ['全部','社工','老師'], c ? c.audience : '全部')) +
-      frow('社工名額', '<input id="c-swQuota" type="number" min="0" class="finput" value="' + esc(c ? c.swQuota : 0) + '" placeholder="0 = 不另設限">') +
-      frow('老師名額', '<input id="c-teQuota" type="number" min="0" class="finput" value="' + esc(c ? c.teQuota : 0) + '" placeholder="0 = 不另設限">') +
+      frow('開放對象', fsel('c-audience', ['全部','社政','教育'], c ? c.audience : '全部')) +
+      frow('社政名額', '<input id="c-swQuota" type="number" min="0" class="finput" value="' + esc(c ? c.swQuota : 0) + '" placeholder="0 = 不另設限">') +
+      frow('教育名額', '<input id="c-teQuota" type="number" min="0" class="finput" value="' + esc(c ? c.teQuota : 0) + '" placeholder="0 = 不另設限">') +
       frow('報名開放', '<input id="c-regOpen" class="finput" value="' + esc(c ? c.regOpen : '') + '" maxlength="20" placeholder="2026/06/01">') +
       frow('報名截止', '<input id="c-regClose" class="finput" value="' + esc(c ? c.regClose : '') + '" maxlength="20" placeholder="填開課日期自動計算">') +
       frow('狀態', fsel('c-status', ['關閉','開放'], c ? c.status : '關閉')) +
@@ -653,7 +704,7 @@
           '<td><button class="ghost sm" onclick="editMember(' + i + ')">編輯</button></td></tr>';
       }).join('');
       ct.innerHTML = '<p class="hint">共 ' + list.length + ' 位學員。點「編輯」可修改資料或校正累計記點。</p>' +
-        '<table><tr><th>姓名</th><th>身份</th><th>單位</th><th>職稱</th><th>手機</th><th>Email</th><th>記點</th><th>操作</th></tr>' + rows + '</table>';
+        '<table><tr><th>姓名</th><th>領域</th><th>單位</th><th>職稱</th><th>手機</th><th>登入帳號</th><th>記點</th><th>操作</th></tr>' + rows + '</table>';
     }).catch(function(e) { ct.innerHTML = '<div class="center err">錯誤：' + esc(e.message) + '</div>'; });
   }
 
@@ -663,18 +714,24 @@
     document.getElementById('modal-title').textContent = '編輯學員：' + (m.name || m.email);
     document.getElementById('modal-body').innerHTML =
       '<table class="form-table">' +
-      frow('Email', '<input class="finput" value="' + esc(m.email) + '" disabled style="background:#f3f3f3;color:#888;">') +
+      frow('登入帳號', '<input class="finput" value="' + esc(m.email) + '" disabled style="background:#f3f3f3;color:#888;">') +
       frow('姓名', '<input id="e-name" class="finput" value="' + esc(m.name) + '" maxlength="50">') +
-      frow('身份別', fsel('e-identity', ['','社工','老師'], m.identity)) +
+      frow('服務領域', '<select id="e-identity" class="finput" onchange="toggleEditSocial()">' +
+        ['','社政','教育'].map(function(o){ return '<option value="'+esc(o)+'"'+(m.identity===o?' selected':'')+'>'+esc(o||'請選擇')+'</option>'; }).join('') + '</select>') +
       frow('生理性別', fsel('e-gender', ['','男','女','其他/不透漏'], m.gender)) +
       frow('身份證字號', '<input id="e-idNumber" class="finput" value="' + esc(m.idNumber) + '" maxlength="20">') +
+      frow('聯絡信箱', '<input id="e-contactEmail" class="finput" value="' + esc(m.contactEmail) + '" maxlength="80">') +
       frow('手機電話', '<input id="e-mobile" class="finput" value="' + esc(m.mobile) + '" maxlength="30">') +
       frow('辦公室電話', '<input id="e-officePhone" class="finput" value="' + esc(m.officePhone) + '" maxlength="30">') +
-      frow('餐食選擇', fsel('e-meal', ['','葷食','素食','清真','不需要'], m.meal)) +
+      frow('餐食選擇', fsel('e-meal', ['','葷食','素食'], m.meal)) +
       frow('單位名稱', '<input id="e-org" class="finput" value="' + esc(m.org) + '" maxlength="100">') +
       frow('職稱', '<input id="e-title" class="finput" value="' + esc(m.title) + '" maxlength="50">') +
-      frow('積分需求', fsel('e-creditNeeded', ['','需要','不需要'], m.creditNeeded)) +
-      frow('主責項目', '<input id="e-mainTask" class="finput" value="' + esc(m.mainTask) + '" maxlength="200">') +
+      '</table>' +
+      '<div id="e-social-fields" style="display:none;"><table class="form-table">' +
+      frow('社工師繼續教育積分', fsel('e-creditNeeded', ['','需要','不需要'], m.creditNeeded)) +
+      frow('主責項目', fsel('e-mainTask', ['','一般性社工','保護性社工-家庭暴力防治','保護性社工-兒少保護','保護性社工-性侵害防治'], m.mainTask)) +
+      '</table></div>' +
+      '<table class="form-table">' +
       frow('累計記點', '<input id="e-points" class="finput" type="number" min="0" value="' + esc(m.points) + '">') +
       '</table>' +
       '<p class="hint err" id="e-err"></p>' +
@@ -683,7 +740,9 @@
       '<button class="action" id="e-ok">儲存</button></div>';
     document.getElementById('modal').querySelector('.modal').style.width = '420px';
     document.getElementById('modal').style.display = 'flex';
+    toggleEditSocial();
     document.getElementById('e-ok').onclick = function() {
+      var isSocial = document.getElementById('e-identity').value === '社政';
       var btn = this; btn.disabled = true; btn.textContent = '儲存中…';
       api('adminUpdateMember', {
         email:        m.email,
@@ -691,13 +750,14 @@
         identity:     document.getElementById('e-identity').value,
         gender:       document.getElementById('e-gender').value,
         idNumber:     document.getElementById('e-idNumber').value.trim(),
+        contactEmail: document.getElementById('e-contactEmail').value.trim(),
         mobile:       document.getElementById('e-mobile').value.trim(),
         officePhone:  document.getElementById('e-officePhone').value.trim(),
         meal:         document.getElementById('e-meal').value,
         org:          document.getElementById('e-org').value.trim(),
         title:        document.getElementById('e-title').value.trim(),
-        creditNeeded: document.getElementById('e-creditNeeded').value,
-        mainTask:     document.getElementById('e-mainTask').value.trim(),
+        creditNeeded: isSocial ? document.getElementById('e-creditNeeded').value : '',
+        mainTask:     isSocial ? document.getElementById('e-mainTask').value : '',
         points:       document.getElementById('e-points').value
       }).then(function() {
         closeModal(); loadAdminMembers();
@@ -706,6 +766,10 @@
         btn.disabled = false; btn.textContent = '儲存';
       });
     };
+  }
+  function toggleEditSocial() {
+    var box = document.getElementById('e-social-fields');
+    if (box) box.style.display = (document.getElementById('e-identity').value === '社政') ? '' : 'none';
   }
 
   function showErr(e) { panel().innerHTML = '<div class="center err">發生錯誤：' + esc(e.message || e) + '</div>'; }
