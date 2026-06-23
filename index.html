@@ -227,7 +227,10 @@
       });
     };
   }
-  function closeModal() { document.getElementById('modal').style.display = 'none'; }
+  function closeModal() {
+    document.getElementById('modal').style.display = 'none';
+    document.getElementById('modal').querySelector('.modal').style.width = ''; // 還原寬度
+  }
 
   // ===== 我的報名 =====
   function renderMy() {
@@ -340,6 +343,7 @@
         '<div class="subtabs">' +
         '<button class="subtab active" id="btn-regs" onclick="setAdminView(\'regs\')">報名名單</button>' +
         '<button class="subtab" id="btn-att" onclick="setAdminView(\'attendance\')">登記出勤</button>' +
+        '<button class="subtab" id="btn-members" onclick="setAdminView(\'members\')">學員管理</button>' +
         '</div><div id="adm-content"></div>';
       ADMIN_COURSE = ''; ADMIN_VIEW = 'regs';
       loadAdminView();
@@ -350,9 +354,14 @@
     ADMIN_VIEW = view;
     document.getElementById('btn-regs').classList.toggle('active', view === 'regs');
     document.getElementById('btn-att').classList.toggle('active', view === 'attendance');
+    document.getElementById('btn-members').classList.toggle('active', view === 'members');
     loadAdminView();
   }
-  function loadAdminView() { if (ADMIN_VIEW === 'regs') loadAdminRegs(); else loadAdminAttendance(); }
+  function loadAdminView() {
+    if      (ADMIN_VIEW === 'regs')       loadAdminRegs();
+    else if (ADMIN_VIEW === 'attendance') loadAdminAttendance();
+    else if (ADMIN_VIEW === 'members')    loadAdminMembers();
+  }
 
   function loadAdminRegs() {
     var ct = document.getElementById('adm-content');
@@ -423,6 +432,77 @@
       msg.className = 'hint err'; msg.textContent = e.message || e;
       btn.disabled = false; btn.textContent = '送出出勤紀錄';
     });
+  }
+
+  // ===== 後台：學員管理 =====
+  var MEMBERS_CACHE = [];
+  function loadAdminMembers() {
+    var ct = document.getElementById('adm-content');
+    ct.innerHTML = '<div class="center">載入中…</div>';
+    api('adminGetMembers').then(function(list) {
+      MEMBERS_CACHE = list;
+      if (!list.length) { ct.innerHTML = '<div class="center">目前沒有學員資料</div>'; return; }
+      var rows = list.map(function(m, i) {
+        return '<tr><td>' + esc(m.name) + '</td><td>' + esc(m.identity) + '</td>' +
+          '<td>' + esc(m.org) + '</td><td>' + esc(m.title) + '</td>' +
+          '<td>' + esc(m.mobile) + '</td><td>' + esc(m.email) + '</td>' +
+          '<td>' + esc(m.points) + '</td>' +
+          '<td><button class="ghost sm" onclick="editMember(' + i + ')">編輯</button></td></tr>';
+      }).join('');
+      ct.innerHTML = '<p class="hint">共 ' + list.length + ' 位學員。點「編輯」可修改資料或校正累計記點。</p>' +
+        '<table><tr><th>姓名</th><th>身份</th><th>單位</th><th>職稱</th><th>手機</th><th>Email</th><th>記點</th><th>操作</th></tr>' + rows + '</table>';
+    }).catch(function(e) { ct.innerHTML = '<div class="center err">錯誤：' + esc(e.message) + '</div>'; });
+  }
+
+  function editMember(idx) {
+    var m = MEMBERS_CACHE[idx];
+    if (!m) return;
+    document.getElementById('modal-title').textContent = '編輯學員：' + (m.name || m.email);
+    document.getElementById('modal-body').innerHTML =
+      '<table class="form-table">' +
+      frow('Email', '<input class="finput" value="' + esc(m.email) + '" disabled style="background:#f3f3f3;color:#888;">') +
+      frow('姓名', '<input id="e-name" class="finput" value="' + esc(m.name) + '" maxlength="50">') +
+      frow('身份別', fsel('e-identity', ['','社工','老師'], m.identity)) +
+      frow('生理性別', fsel('e-gender', ['','男','女','其他/不透漏'], m.gender)) +
+      frow('身份證字號', '<input id="e-idNumber" class="finput" value="' + esc(m.idNumber) + '" maxlength="20">') +
+      frow('手機電話', '<input id="e-mobile" class="finput" value="' + esc(m.mobile) + '" maxlength="30">') +
+      frow('辦公室電話', '<input id="e-officePhone" class="finput" value="' + esc(m.officePhone) + '" maxlength="30">') +
+      frow('餐食選擇', fsel('e-meal', ['','葷食','素食','清真','不需要'], m.meal)) +
+      frow('單位名稱', '<input id="e-org" class="finput" value="' + esc(m.org) + '" maxlength="100">') +
+      frow('職稱', '<input id="e-title" class="finput" value="' + esc(m.title) + '" maxlength="50">') +
+      frow('積分需求', fsel('e-creditNeeded', ['','需要','不需要'], m.creditNeeded)) +
+      frow('主責項目', '<input id="e-mainTask" class="finput" value="' + esc(m.mainTask) + '" maxlength="200">') +
+      frow('累計記點', '<input id="e-points" class="finput" type="number" min="0" value="' + esc(m.points) + '">') +
+      '</table>' +
+      '<p class="hint err" id="e-err"></p>' +
+      '<div style="text-align:right;margin-top:10px;">' +
+      '<button class="ghost" onclick="closeModal()">取消</button> ' +
+      '<button class="action" id="e-ok">儲存</button></div>';
+    document.getElementById('modal').querySelector('.modal').style.width = '420px';
+    document.getElementById('modal').style.display = 'flex';
+    document.getElementById('e-ok').onclick = function() {
+      var btn = this; btn.disabled = true; btn.textContent = '儲存中…';
+      api('adminUpdateMember', {
+        email:        m.email,
+        name:         document.getElementById('e-name').value.trim(),
+        identity:     document.getElementById('e-identity').value,
+        gender:       document.getElementById('e-gender').value,
+        idNumber:     document.getElementById('e-idNumber').value.trim(),
+        mobile:       document.getElementById('e-mobile').value.trim(),
+        officePhone:  document.getElementById('e-officePhone').value.trim(),
+        meal:         document.getElementById('e-meal').value,
+        org:          document.getElementById('e-org').value.trim(),
+        title:        document.getElementById('e-title').value.trim(),
+        creditNeeded: document.getElementById('e-creditNeeded').value,
+        mainTask:     document.getElementById('e-mainTask').value.trim(),
+        points:       document.getElementById('e-points').value
+      }).then(function() {
+        closeModal(); loadAdminMembers();
+      }).catch(function(e) {
+        document.getElementById('e-err').textContent = e.message || e;
+        btn.disabled = false; btn.textContent = '儲存';
+      });
+    };
   }
 
   function showErr(e) { panel().innerHTML = '<div class="center err">發生錯誤：' + esc(e.message || e) + '</div>'; }
