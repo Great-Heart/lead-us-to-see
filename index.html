@@ -5,6 +5,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>教育訓練報名平台</title>
+  <!-- 預先建立連線，縮短首次 API 呼叫的握手時間 -->
+  <link rel="preconnect" href="https://script.google.com">
+  <link rel="preconnect" href="https://script.googleusercontent.com">
+  <link rel="preconnect" href="https://oauth2.googleapis.com">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <style>
     :root { --brand:#E8732B; --brand-dark:#cf6420; --bg:#fff7f1; --line:#f0d9c8; --text:#333; }
@@ -38,7 +42,8 @@
     .badge-te { background:#f3e5f5; color:#6a1b9a; padding:2px 8px; border-radius:10px; font-size:12px; margin-left:6px; }
     table { width:100%; border-collapse:collapse; background:#fff; font-size:14px; }
     th, td { border:1px solid var(--line); padding:7px 9px; text-align:left; }
-    th { background:#fbe7d6; }
+    th { background:#fbe7d6; white-space:nowrap; }
+    td.cname { min-width:160px; max-width:260px; } /* 課名最多兩行內 */
     .center { text-align:center; padding:40px 0; color:#999; }
     .signin-wrap { text-align:center; padding:60px 0; }
     #gbtn { display:inline-block; }
@@ -98,6 +103,9 @@
   var ADMIN_COURSE = '';
   var ADMIN_VIEW   = 'regs';
 
+  // 前端記憶體快取：切分頁先秒顯示舊資料，再背景更新；寫入後設 null 失效
+  var CACHE = { openCourses: null, profile: null, courses: null };
+
   function api(action, payload) {
     return fetch(GAS_URL, {
       method: 'POST',
@@ -139,6 +147,7 @@
       google.accounts.id.disableAutoSelect();
     }
     ID_TOKEN = null; CURRENT = null; PROFILE_OK = false;
+    CACHE = { openCourses: null, profile: null, courses: null };
     document.getElementById('view-app').style.display = 'none';
     document.getElementById('view-signin').style.display = 'block';
     document.getElementById('signin-err').textContent = '';
@@ -164,6 +173,8 @@
     document.querySelectorAll('.tab').forEach(function(t) {
       t.classList.toggle('active', t.dataset.tab === name);
     });
+    // 後台資料表多，放寬版面；其他頁維持原寬
+    document.querySelector('main').style.maxWidth = (name === 'admin') ? '1200px' : '';
     if      (name === 'courses') renderCourses();
     else if (name === 'my')      renderMy();
     else if (name === 'profile') renderProfile();
@@ -180,28 +191,35 @@
 
   // ===== 課程報名 =====
   function renderCourses() {
-    loading();
+    // 有快取就先秒顯示，再背景更新；沒有才顯示「載入中」
+    if (CACHE.openCourses) paintCourses(CACHE.openCourses);
+    else loading();
     api('getOpenCourses').then(function(list) {
-      var head = '<p class="meta" style="margin-bottom:10px;">以下是開放給「<strong>' +
-        esc(list.length ? (list[0].myIdentity || '你的身份') : (CURRENT && CURRENT.identity || '你的身份')) +
-        '</strong>」的課程。</p>';
-      if (!list.length) { panel().innerHTML = '<div class="center">目前沒有開放給你報名的課程</div>'; return; }
-      panel().innerHTML = head + list.map(function(c) {
-        var badge = c.audience === '社工' ? '<span class="badge-sw">限社工</span>'
-                  : c.audience === '老師' ? '<span class="badge-te">限老師</span>' : '';
-        var quota;
-        if (c.swQuota > 0 || c.teQuota > 0) {
-          quota = (c.swQuota > 0 ? '社工 ' + c.swCount + '/' + c.swQuota + ' 人　' : '') +
-                  (c.teQuota > 0 ? '老師 ' + c.teCount + '/' + c.teQuota + ' 人' : '');
-        } else {
-          quota = '已報名 ' + c.total + (c.capacity > 0 ? ' / ' + c.capacity : '') + ' 人';
-        }
-        return '<div class="card"><h3>' + esc(c.name) + badge + '</h3>' +
-          '<div class="meta">場次：' + esc(c.session) + '<br>時間：' + esc(c.datetime) +
-          '<br>地點：' + esc(c.place) + '<br>名額：' + quota + '</div>' +
-          '<p><button class="action" onclick="confirmRegister(\'' + esc(c.courseId) + '\',\'' + esc(c.name) + '\')">我要報名</button></p></div>';
-      }).join('');
-    }).catch(showErr);
+      CACHE.openCourses = list;
+      paintCourses(list);
+    }).catch(function(e) { if (!CACHE.openCourses) showErr(e); });
+  }
+  function paintCourses(list) {
+    var head = '<p class="meta" style="margin-bottom:10px;">以下是開放給「<strong>' +
+      esc(list.length ? (list[0].myIdentity || '你的身份') : (CURRENT && CURRENT.identity || '你的身份')) +
+      '</strong>」的課程。</p>';
+    if (!list.length) { panel().innerHTML = '<div class="center">目前沒有開放給你報名的課程</div>'; return; }
+    panel().innerHTML = head + list.map(function(c) {
+      var badge = c.audience === '社工' ? '<span class="badge-sw">限社工</span>'
+                : c.audience === '老師' ? '<span class="badge-te">限老師</span>' : '';
+      var quota;
+      if (c.swQuota > 0 || c.teQuota > 0) {
+        quota = (c.swQuota > 0 ? '社工 ' + c.swCount + '/' + c.swQuota + ' 人　' : '') +
+                (c.teQuota > 0 ? '老師 ' + c.teCount + '/' + c.teQuota + ' 人' : '');
+      } else {
+        quota = '已報名 ' + c.total + (c.capacity > 0 ? ' / ' + c.capacity : '') + ' 人';
+      }
+      var sessionLine = c.session ? '場次：' + esc(c.session) + '<br>' : ''; // 場次空白不顯示
+      return '<div class="card"><h3>' + esc(c.name) + badge + '</h3>' +
+        '<div class="meta">' + sessionLine + '時間：' + esc(c.datetime) +
+        '<br>地點：' + esc(c.place) + '<br>名額：' + quota + '</div>' +
+        '<p><button class="action" onclick="confirmRegister(\'' + esc(c.courseId) + '\',\'' + esc(c.name) + '\')">我要報名</button></p></div>';
+    }).join('');
   }
 
   // 一鍵報名：身份從個人資料自動帶入，只需確認
@@ -219,6 +237,7 @@
       this.disabled = true; this.textContent = '送出中…';
       api('registerCourse', { courseId: courseId }).then(function(res) {
         closeModal();
+        CACHE.openCourses = null; // 名額/狀態已變，下次重新抓
         var st = (res && res.status) || '待審核';
         var msg = st === '錄取' ? '報名成功，已直接錄取！'
                 : st === '候補' ? '報名成功，目前名額已滿，列為候補。'
@@ -269,7 +288,14 @@
         '</div>';
       return;
     }
+    // 個資是表單，背景重繪會蓋掉使用者輸入；故有快取就直接畫、不重抓
+    if (CACHE.profile) { paintProfile(CACHE.profile); return; }
     api('getMyProfile').then(function(p) {
+      CACHE.profile = p;
+      paintProfile(p);
+    }).catch(showErr);
+  }
+  function paintProfile(p) {
       var gate = !PROFILE_OK
         ? '<div class="notice">首次使用請先完整填寫個人資料（標 <span class="req">*</span> 為必填），儲存後才能報名課程。</div>'
         : '';
@@ -292,7 +318,6 @@
         '<p style="margin-top:12px;"><button class="action" id="p-save" onclick="saveProfile()">儲存資料</button>　<span id="p-msg" class="hint"></span></p>' +
         '<p class="hint" style="color:#bbb;">資料儲存於主辦單位 Google Sheets，僅供課程管理使用。</p>' +
         '</div>';
-    }).catch(showErr);
   }
   function frow(label, input) { return '<tr><td>' + label + '</td><td style="padding:4px 0;">' + input + '</td></tr>'; }
   function fsel(id, opts, cur) {
@@ -331,6 +356,13 @@
       btn.disabled = false; btn.textContent = '儲存資料';
       var firstTime = !PROFILE_OK;
       PROFILE_OK = true;
+      // 更新快取：保留累計記點，套用剛存的欄位；身份別可能變 → 課程清單失效
+      var pts = CACHE.profile ? CACHE.profile.points : 0;
+      CACHE.profile = { email: (CACHE.profile && CACHE.profile.email) || (CURRENT && CURRENT.email) || '',
+        name: v.name, identity: v.identity, gender: v.gender, idNumber: v.idNumber,
+        mobile: v.mobile, officePhone: v.officePhone, meal: v.meal, org: v.org,
+        title: v.title, creditNeeded: v.creditNeeded, mainTask: v.mainTask, points: pts };
+      CACHE.openCourses = null;
       // 解鎖分頁
       document.getElementById('tab-courses').disabled = false;
       document.getElementById('tab-my').disabled = false;
@@ -465,33 +497,41 @@
     var ct = document.getElementById('adm-content');
     // 新增按鈕一定先畫出來，清單載入失敗也不影響開課
     var addBtn = '<p style="margin-bottom:10px;"><button class="action" onclick="openCourseForm(-1)">＋ 新增課程</button></p>';
-    ct.innerHTML = addBtn + '<div id="adm-course-list" class="center">載入中…</div>';
+    ct.innerHTML = addBtn + '<div id="adm-course-list" class="center">' +
+      (CACHE.courses ? '' : '載入中…') + '</div>';
+    if (CACHE.courses) paintCourseList(CACHE.courses); // 有快取先秒顯示
     api('adminGetCoursesFull').then(function(list) {
-      COURSES_CACHE = list;
-      var box = document.getElementById('adm-course-list');
-      if (!list.length) { box.innerHTML = '目前尚無課程，點上方「＋ 新增課程」開始建立。'; return; }
-      var rows = list.map(function(c, i) {
-        var badge = c.status === '開放'
-          ? '<span class="status s-錄取">開放</span>'
-          : '<span class="status s-取消">關閉</span>';
-        var quota = (c.swQuota || c.teQuota)
-          ? '社工 ' + c.swQuota + '　老師 ' + c.teQuota
-          : (c.capacity || '—');
-        var toggleLabel = c.status === '開放' ? '關閉' : '開放';
-        return '<tr><td>' + esc(c.courseId) + '</td><td>' + esc(c.name) + '</td><td>' + esc(c.session) + '</td>' +
-          '<td>' + esc(c.datetime) + '</td><td>' + esc(c.place) + '</td>' +
-          '<td>' + esc(c.audience) + '</td><td>' + quota + '</td>' +
-          '<td>' + esc(c.regClose) + '</td><td>' + badge + '</td>' +
-          '<td style="white-space:nowrap;">' +
-          '<button class="ghost sm" style="margin:1px;" onclick="openCourseForm(' + i + ')">編輯</button>' +
-          '<button class="ghost sm" style="margin:1px;" onclick="toggleCourse(' + i + ')">' + toggleLabel + '</button>' +
-          '<button class="ghost sm" style="margin:1px;color:#c0392b;border-color:#e0a0a0;" onclick="deleteCourse(' + i + ')">刪除</button>' +
-          '</td></tr>';
-      }).join('');
-      box.innerHTML = '<table><tr><th>代號</th><th>課名</th><th>場次</th><th>日期時間</th><th>地點</th><th>對象</th><th>名額</th><th>報名截止</th><th>狀態</th><th>操作</th></tr>' + rows + '</table>';
+      CACHE.courses = list;
+      paintCourseList(list);
     }).catch(function(e) {
-      document.getElementById('adm-course-list').innerHTML = '<span class="err">課程清單載入失敗：' + esc(e.message) + '</span>';
+      if (!CACHE.courses)
+        document.getElementById('adm-course-list').innerHTML = '<span class="err">課程清單載入失敗：' + esc(e.message) + '</span>';
     });
+  }
+  function paintCourseList(list) {
+    COURSES_CACHE = list; // 給編輯/刪除/切換用索引
+    var box = document.getElementById('adm-course-list');
+    if (!box) return;
+    if (!list.length) { box.innerHTML = '目前尚無課程，點上方「＋ 新增課程」開始建立。'; return; }
+    var rows = list.map(function(c, i) {
+      var badge = c.status === '開放'
+        ? '<span class="status s-錄取">開放</span>'
+        : '<span class="status s-取消">關閉</span>';
+      var quota = (c.swQuota || c.teQuota)
+        ? '社工 ' + c.swQuota + '　老師 ' + c.teQuota
+        : (c.capacity || '—');
+      var toggleLabel = c.status === '開放' ? '關閉' : '開放';
+      return '<tr><td>' + esc(c.courseId) + '</td><td class="cname">' + esc(c.name) + '</td><td>' + esc(c.session) + '</td>' +
+        '<td>' + esc(c.datetime) + '</td><td>' + esc(c.place) + '</td>' +
+        '<td>' + esc(c.audience) + '</td><td>' + quota + '</td>' +
+        '<td>' + esc(c.regClose) + '</td><td>' + badge + '</td>' +
+        '<td style="white-space:nowrap;">' +
+        '<button class="ghost sm" style="margin:1px;" onclick="openCourseForm(' + i + ')">編輯</button>' +
+        '<button class="ghost sm" style="margin:1px;" onclick="toggleCourse(' + i + ')">' + toggleLabel + '</button>' +
+        '<button class="ghost sm" style="margin:1px;color:#c0392b;border-color:#e0a0a0;" onclick="deleteCourse(' + i + ')">刪除</button>' +
+        '</td></tr>';
+    }).join('');
+    box.innerHTML = '<div style="overflow-x:auto;"><table><tr><th>代號</th><th>課名</th><th>場次</th><th>日期時間</th><th>地點</th><th>對象</th><th>名額</th><th>報名截止</th><th>狀態</th><th>操作</th></tr>' + rows + '</table></div>';
   }
 
   // 快速切換開放/關閉（沿用 adminUpdateCourse，只改狀態）
@@ -504,7 +544,8 @@
       place: c.place, capacity: c.capacity, audience: c.audience,
       swQuota: c.swQuota, teQuota: c.teQuota, regOpen: c.regOpen, regClose: c.regClose,
       status: next
-    }).then(loadAdminCourses).catch(function(e) { alert('錯誤：' + (e.message || e)); });
+    }).then(function() { CACHE.courses = null; loadAdminCourses(); })
+      .catch(function(e) { alert('錯誤：' + (e.message || e)); });
   }
 
   function deleteCourse(idx) {
@@ -512,7 +553,7 @@
     if (!c) return;
     if (!confirm('確定刪除課程「' + c.name + '」？此動作無法復原。')) return;
     api('adminDeleteCourse', { courseId: c.courseId })
-      .then(loadAdminCourses)
+      .then(function() { CACHE.courses = null; loadAdminCourses(); })
       .catch(function(e) { alert(e.message || e); });
   }
 
@@ -559,11 +600,12 @@
         teQuota:  document.getElementById('c-teQuota').value,
         regOpen:  document.getElementById('c-regOpen').value.trim(),
         regClose: document.getElementById('c-regClose').value.trim(),
-        status:   document.getElementById('c-status').value
+        status:   document.getElementById('c-status').value,
+        dateForId: dateVal // 給後端產生 YYMM+流水號代碼用
       };
       if (isEdit) payload.courseId = c.courseId;
       api(isEdit ? 'adminUpdateCourse' : 'adminCreateCourse', payload).then(function() {
-        closeModal(); loadAdminCourses();
+        closeModal(); CACHE.courses = null; loadAdminCourses();
       }).catch(function(e) {
         document.getElementById('c-err').textContent = e.message || e;
         btn.disabled = false; btn.textContent = '儲存';
