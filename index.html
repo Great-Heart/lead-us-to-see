@@ -36,9 +36,18 @@
     #gbtn { display:inline-block; }
     .hint { color:#999; font-size:13px; margin-top:10px; }
     .err { color:#c0392b; }
+    .ok { color:#1e7e34; }
     .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; }
     .modal { background:#fff; border-radius:10px; padding:20px; width:320px; max-width:90%; }
     .modal input { width:100%; padding:8px; margin:8px 0; border:1px solid #ccc; border-radius:6px; }
+    /* 個人資料表單 */
+    .form-table { width:100%; border-collapse:collapse; }
+    .form-table td { border:none; padding:5px 0; vertical-align:middle; }
+    .form-table td:first-child { color:#555; white-space:nowrap; padding-right:14px; font-size:14px; min-width:90px; }
+    .finput { width:100%; padding:7px 9px; border:1px solid #ccc; border-radius:6px; font-size:14px; font-family:inherit; }
+    .finput:focus { outline:none; border-color:var(--brand); box-shadow:0 0 0 2px rgba(232,115,43,.15); }
+    select.finput { background:#fff; cursor:pointer; }
+    .req { color:#c0392b; }
   </style>
 </head>
 <body>
@@ -57,6 +66,7 @@
       <div class="tabs">
         <button class="tab active" data-tab="courses">課程報名</button>
         <button class="tab" data-tab="my">我的報名</button>
+        <button class="tab" data-tab="profile">個人資料</button>
         <button class="tab" data-tab="admin" id="tab-admin" style="display:none;">後台</button>
       </div>
       <div id="panel"></div>
@@ -70,12 +80,12 @@
   </div>
 
 <script>
-  // ===== 設定（這兩個值若有變動要同步改） =====
-  var GAS_URL = 'https://script.google.com/macros/s/AKfycbw0cb9KW6DcA0HprkxQHtpqtRQzXVtjViNxHUAfgOcjD2kmjyhiETL2LX_PqipeSHEt7g/exec';
+  // ===== 設定 =====
+  var GAS_URL   = 'https://script.google.com/macros/s/AKfycbw0cb9KW6DcA0HprkxQHtpqtRQzXVtjViNxHUAfgOcjD2kmjyhiETL2LX_PqipeSHEt7g/exec';
   var CLIENT_ID = '827349215437-1najkao8u6kcitn9rr765bu4eqhks4h3.apps.googleusercontent.com';
 
   var ID_TOKEN = null;
-  var CURRENT = null;
+  var CURRENT  = null;
 
   // 呼叫 GAS API：用 text/plain 送 JSON，避開 CORS preflight
   function api(action, payload) {
@@ -83,8 +93,8 @@
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ action: action, idToken: ID_TOKEN, payload: payload || {} })
-    }).then(function (r) { return r.json(); })
-      .then(function (res) {
+    }).then(function(r) { return r.json(); })
+      .then(function(res) {
         if (!res.ok) throw new Error(res.error || '伺服器錯誤');
         return res.data;
       });
@@ -92,20 +102,20 @@
 
   function onGoogleSignIn(resp) {
     ID_TOKEN = resp.credential;
-    api('getCurrentUser').then(function (user) {
+    api('getCurrentUser').then(function(user) {
       CURRENT = user;
       document.getElementById('view-signin').style.display = 'none';
       document.getElementById('view-app').style.display = 'block';
       document.getElementById('userbox').textContent = user.name + '（' + user.email + '）';
       if (user.isAdmin) document.getElementById('tab-admin').style.display = 'inline-block';
       switchTab('courses');
-    }).catch(function (e) {
+    }).catch(function(e) {
       document.getElementById('signin-err').textContent = '登入失敗：' + (e.message || e);
     });
   }
 
-  window.onload = function () {
-    var timer = setInterval(function () {
+  window.onload = function() {
+    var timer = setInterval(function() {
       if (window.google && google.accounts && google.accounts.id) {
         clearInterval(timer);
         google.accounts.id.initialize({ client_id: CLIENT_ID, callback: onGoogleSignIn });
@@ -115,27 +125,35 @@
     }, 200);
   };
 
-  document.querySelectorAll('.tab').forEach(function (t) {
-    t.addEventListener('click', function () { switchTab(t.dataset.tab); });
+  document.querySelectorAll('.tab').forEach(function(t) {
+    t.addEventListener('click', function() { switchTab(t.dataset.tab); });
   });
   function switchTab(name) {
-    document.querySelectorAll('.tab').forEach(function (t) {
+    document.querySelectorAll('.tab').forEach(function(t) {
       t.classList.toggle('active', t.dataset.tab === name);
     });
-    if (name === 'courses') renderCourses();
-    else if (name === 'my') renderMy();
-    else if (name === 'admin') renderAdmin();
+    if      (name === 'courses') renderCourses();
+    else if (name === 'my')      renderMy();
+    else if (name === 'profile') renderProfile();
+    else if (name === 'admin')   renderAdmin();
   }
 
-  var panel = function () { return document.getElementById('panel'); };
+  var panel = function() { return document.getElementById('panel'); };
   function loading() { panel().innerHTML = '<div class="center">載入中…</div>'; }
-  function esc(s) { return String(s == null ? '' : s).replace(/[&<>]/g, function (c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c]; }); }
 
+  // " 也要 escape，避免注入 value="" 屬性
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function(c) {
+      return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' })[c];
+    });
+  }
+
+  // ===== 課程報名 =====
   function renderCourses() {
     loading();
-    api('getOpenCourses').then(function (list) {
+    api('getOpenCourses').then(function(list) {
       if (!list.length) { panel().innerHTML = '<div class="center">目前沒有開放報名的課程</div>'; return; }
-      panel().innerHTML = list.map(function (c) {
+      panel().innerHTML = list.map(function(c) {
         return '<div class="card"><h3>' + esc(c.name) + '</h3>' +
           '<div class="meta">場次：' + esc(c.session) + '<br>時間：' + esc(c.datetime) +
           '<br>地點：' + esc(c.place) + '<br>名額：' + esc(c.registered) + ' / ' + esc(c.capacity) + '</div>' +
@@ -152,12 +170,14 @@
       '<div style="text-align:right;"><button class="ghost" onclick="closeModal()">取消</button> ' +
       '<button class="action" id="m-ok">確認報名</button></div>';
     document.getElementById('modal').style.display = 'flex';
-    document.getElementById('m-ok').onclick = function () {
+    document.getElementById('m-ok').onclick = function() {
       var phone = document.getElementById('m-phone').value.trim();
       this.disabled = true; this.textContent = '送出中…';
-      api('registerCourse', { courseId: courseId, phone: phone }).then(function () {
-        closeModal(); alert('報名成功！狀態為「待審核」，可到「我的報名」查看。'); switchTab('my');
-      }).catch(function (e) {
+      api('registerCourse', { courseId: courseId, phone: phone }).then(function() {
+        closeModal();
+        alert('報名成功！狀態為「待審核」，可到「我的報名」查看。');
+        switchTab('my');
+      }).catch(function(e) {
         document.getElementById('m-err').textContent = e.message || e;
         var b = document.getElementById('m-ok'); b.disabled = false; b.textContent = '確認報名';
       });
@@ -165,11 +185,12 @@
   }
   function closeModal() { document.getElementById('modal').style.display = 'none'; }
 
+  // ===== 我的報名 =====
   function renderMy() {
     loading();
-    api('getMyRegistrations').then(function (list) {
+    api('getMyRegistrations').then(function(list) {
       if (!list.length) { panel().innerHTML = '<div class="center">你還沒有任何報名紀錄</div>'; return; }
-      panel().innerHTML = list.map(function (r) {
+      panel().innerHTML = list.map(function(r) {
         var cancelBtn = (r.status === '待審核' || r.status === '候補')
           ? '<button class="ghost" onclick="cancelReg(\'' + esc(r.regId) + '\')">取消報名</button>' : '';
         return '<div class="card"><h3>' + esc(r.courseName) + '</h3>' +
@@ -180,13 +201,100 @@
   }
   function cancelReg(regId) {
     if (!confirm('確定取消這筆報名？')) return;
-    api('cancelMyRegistration', { regId: regId }).then(function () { renderMy(); }).catch(showErr);
+    api('cancelMyRegistration', { regId: regId }).then(function() { renderMy(); }).catch(showErr);
   }
 
+  // ===== 個人資料 =====
+  function renderProfile() {
+    loading();
+    api('getMyProfile').then(function(p) {
+      panel().innerHTML =
+        '<div class="card">' +
+        '<h3>個人基本資料</h3>' +
+        '<p class="meta">登入帳號：<strong>' + esc(p.email) + '</strong>（不可更改）' +
+        (p.points ? '　　累計記點：<strong>' + p.points + ' 點</strong>' : '') + '</p>' +
+        '<table class="form-table">' +
+        frow('姓名 <span class="req">*</span>',
+          '<input id="p-name" class="finput" value="' + esc(p.name) + '" maxlength="50">') +
+        frow('生理性別 <span class="req">*</span>',
+          fsel('p-gender', ['', '男', '女', '其他/不透漏'], p.gender)) +
+        frow('身份證字號',
+          '<input id="p-idNumber" class="finput" value="' + esc(p.idNumber) + '" maxlength="20" placeholder="A123456789">') +
+        frow('手機電話 <span class="req">*</span>',
+          '<input id="p-mobile" class="finput" value="' + esc(p.mobile) + '" maxlength="30" placeholder="0912345678">') +
+        frow('辦公室電話',
+          '<input id="p-officePhone" class="finput" value="' + esc(p.officePhone) + '" maxlength="30" placeholder="03-1234567">') +
+        frow('餐食選擇',
+          fsel('p-meal', ['', '葷食', '素食', '清真', '不需要'], p.meal)) +
+        frow('單位名稱 <span class="req">*</span>',
+          '<input id="p-org" class="finput" value="' + esc(p.org) + '" maxlength="100">') +
+        frow('職稱 <span class="req">*</span>',
+          '<input id="p-title" class="finput" value="' + esc(p.title) + '" maxlength="50">') +
+        frow('積分需求',
+          fsel('p-creditNeeded', ['', '需要', '不需要'], p.creditNeeded)) +
+        frow('主責項目',
+          '<input id="p-mainTask" class="finput" value="' + esc(p.mainTask) + '" maxlength="200" placeholder="例如：家防、兒少保護">') +
+        '</table>' +
+        '<p style="margin-top:12px;">' +
+        '<button class="action" id="p-save" onclick="saveProfile()">儲存資料</button>' +
+        '　<span id="p-msg" class="hint"></span></p>' +
+        '<p class="hint" style="margin-top:8px;color:#aaa;">資料儲存於主辦單位 Google Sheets，僅供課程管理使用。</p>' +
+        '</div>';
+    }).catch(showErr);
+  }
+
+  function frow(label, inputHtml) {
+    return '<tr><td>' + label + '</td><td style="padding:4px 0;">' + inputHtml + '</td></tr>';
+  }
+  function fsel(id, opts, cur) {
+    return '<select id="' + id + '" class="finput">' +
+      opts.map(function(o) {
+        return '<option value="' + esc(o) + '"' + (cur === o ? ' selected' : '') + '>' + esc(o || '請選擇') + '</option>';
+      }).join('') + '</select>';
+  }
+  function saveProfile() {
+    var name   = document.getElementById('p-name').value.trim();
+    var gender = document.getElementById('p-gender').value;
+    var mobile = document.getElementById('p-mobile').value.trim();
+    var org    = document.getElementById('p-org').value.trim();
+    var title  = document.getElementById('p-title').value.trim();
+    var msg    = document.getElementById('p-msg');
+
+    msg.className = 'hint err'; msg.textContent = '';
+    if (!name)   { msg.textContent = '姓名為必填'; return; }
+    if (!gender) { msg.textContent = '生理性別為必填'; return; }
+    if (!mobile) { msg.textContent = '手機電話為必填'; return; }
+    if (!org)    { msg.textContent = '單位名稱為必填'; return; }
+    if (!title)  { msg.textContent = '職稱為必填'; return; }
+
+    var btn = document.getElementById('p-save');
+    btn.disabled = true; btn.textContent = '儲存中…';
+
+    api('updateMyProfile', {
+      name:         name,
+      gender:       gender,
+      idNumber:     document.getElementById('p-idNumber').value.trim(),
+      mobile:       mobile,
+      officePhone:  document.getElementById('p-officePhone').value.trim(),
+      meal:         document.getElementById('p-meal').value,
+      org:          org,
+      title:        title,
+      creditNeeded: document.getElementById('p-creditNeeded').value,
+      mainTask:     document.getElementById('p-mainTask').value.trim()
+    }).then(function() {
+      msg.className = 'hint ok'; msg.textContent = '已儲存！';
+      btn.disabled = false; btn.textContent = '儲存資料';
+    }).catch(function(e) {
+      msg.className = 'hint err'; msg.textContent = e.message || e;
+      btn.disabled = false; btn.textContent = '儲存資料';
+    });
+  }
+
+  // ===== 後台 =====
   function renderAdmin() {
     loading();
-    api('adminGetCourses').then(function (courses) {
-      var opts = '<option value="">全部課程</option>' + courses.map(function (c) {
+    api('adminGetCourses').then(function(courses) {
+      var opts = '<option value="">全部課程</option>' + courses.map(function(c) {
         return '<option value="' + esc(c.courseId) + '">' + esc(c.name) + '（' + esc(c.status) + '）</option>';
       }).join('');
       panel().innerHTML = '<p>課程：<select id="adm-course" onchange="loadAdminRegs()">' + opts + '</select></p><div id="adm-table"></div>';
@@ -196,9 +304,9 @@
   function loadAdminRegs() {
     var courseId = document.getElementById('adm-course').value;
     document.getElementById('adm-table').innerHTML = '<div class="center">載入中…</div>';
-    api('adminGetRegistrations', { courseId: courseId }).then(function (list) {
+    api('adminGetRegistrations', { courseId: courseId }).then(function(list) {
       if (!list.length) { document.getElementById('adm-table').innerHTML = '<div class="center">沒有報名資料</div>'; return; }
-      var rows = list.map(function (r) {
+      var rows = list.map(function(r) {
         return '<tr><td>' + esc(r.name) + '</td><td>' + esc(r.email) + '</td><td>' + esc(r.phone) +
           '</td><td>' + esc(r.points) + '</td><td>' + esc(r.regTime) +
           '</td><td><span class="status s-' + esc(r.status) + '">' + esc(r.status) + '</span></td></tr>';
