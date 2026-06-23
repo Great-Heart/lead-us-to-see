@@ -255,6 +255,16 @@
   // ===== 個人資料 =====
   function renderProfile() {
     loading();
+    // 管理帳號不需要填個人資料
+    if (CURRENT && CURRENT.isAdmin) {
+      panel().innerHTML =
+        '<div class="card" style="text-align:center;padding:32px;">' +
+        '<p style="font-size:18px;color:var(--brand-dark);font-weight:bold;">⚙ 管理帳號</p>' +
+        '<p class="meta" style="margin-top:8px;">登入信箱：<strong>' + esc(CURRENT.email) + '</strong></p>' +
+        '<p class="hint">管理帳號不需要填寫個人資料。<br>請使用上方「後台」分頁管理課程與學員。</p>' +
+        '</div>';
+      return;
+    }
     api('getMyProfile').then(function(p) {
       var gate = !PROFILE_OK
         ? '<div class="notice">首次使用請先完整填寫個人資料（標 <span class="req">*</span> 為必填），儲存後才能報名課程。</div>'
@@ -337,28 +347,36 @@
         return '<option value="' + esc(c.courseId) + '">' + esc(c.name) + '（' + esc(c.status) + '）</option>';
       }).join('');
       panel().innerHTML =
-        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">' +
+        '<div id="adm-course-wrap" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">' +
         '<label style="font-size:14px;">課程：<select id="adm-course" onchange="onAdminCourseChange()" style="padding:6px;border:1px solid #ccc;border-radius:6px;">' + opts + '</select></label>' +
         '</div>' +
         '<div class="subtabs">' +
-        '<button class="subtab active" id="btn-regs" onclick="setAdminView(\'regs\')">報名名單</button>' +
+        '<button class="subtab active" id="btn-courses" onclick="setAdminView(\'courses\')">課程管理</button>' +
+        '<button class="subtab" id="btn-regs" onclick="setAdminView(\'regs\')">報名名單</button>' +
         '<button class="subtab" id="btn-att" onclick="setAdminView(\'attendance\')">登記出勤</button>' +
         '<button class="subtab" id="btn-members" onclick="setAdminView(\'members\')">學員管理</button>' +
         '</div><div id="adm-content"></div>';
-      ADMIN_COURSE = ''; ADMIN_VIEW = 'regs';
+      ADMIN_COURSE = ''; ADMIN_VIEW = 'courses';
       loadAdminView();
     }).catch(showErr);
   }
   function onAdminCourseChange() { ADMIN_COURSE = document.getElementById('adm-course').value; loadAdminView(); }
   function setAdminView(view) {
     ADMIN_VIEW = view;
-    document.getElementById('btn-regs').classList.toggle('active', view === 'regs');
-    document.getElementById('btn-att').classList.toggle('active', view === 'attendance');
-    document.getElementById('btn-members').classList.toggle('active', view === 'members');
+    // 每個 view 對應的 btn id suffix
+    var map = { courses:'courses', regs:'regs', attendance:'att', members:'members' };
+    for (var v in map) {
+      var el = document.getElementById('btn-' + map[v]);
+      if (el) el.classList.toggle('active', v === view);
+    }
+    // 課程選擇器只在報名名單/登記出勤時需要
+    var wrap = document.getElementById('adm-course-wrap');
+    if (wrap) wrap.style.display = (view === 'regs' || view === 'attendance') ? 'flex' : 'none';
     loadAdminView();
   }
   function loadAdminView() {
-    if      (ADMIN_VIEW === 'regs')       loadAdminRegs();
+    if      (ADMIN_VIEW === 'courses')    loadAdminCourses();
+    else if (ADMIN_VIEW === 'regs')       loadAdminRegs();
     else if (ADMIN_VIEW === 'attendance') loadAdminAttendance();
     else if (ADMIN_VIEW === 'members')    loadAdminMembers();
   }
@@ -432,6 +450,113 @@
       msg.className = 'hint err'; msg.textContent = e.message || e;
       btn.disabled = false; btn.textContent = '送出出勤紀錄';
     });
+  }
+
+  // ===== 後台：課程管理 =====
+  var COURSES_CACHE = [];
+  function loadAdminCourses() {
+    var ct = document.getElementById('adm-content');
+    ct.innerHTML = '<div class="center">載入中…</div>';
+    api('adminGetCoursesFull').then(function(list) {
+      COURSES_CACHE = list;
+      var addBtn = '<p style="margin-bottom:10px;"><button class="action" onclick="openCourseForm(-1)">＋ 新增課程</button></p>';
+      if (!list.length) { ct.innerHTML = addBtn + '<div class="center">目前尚無課程</div>'; return; }
+      var rows = list.map(function(c, i) {
+        var badge = c.status === '開放'
+          ? '<span class="status s-錄取">開放</span>'
+          : '<span class="status s-取消">關閉</span>';
+        var quota = (c.swQuota || c.teQuota)
+          ? '社工 ' + c.swQuota + '　老師 ' + c.teQuota
+          : c.capacity || '—';
+        return '<tr><td>' + esc(c.name) + '</td><td>' + esc(c.session) + '</td>' +
+          '<td>' + esc(c.datetime) + '</td><td>' + esc(c.place) + '</td>' +
+          '<td>' + esc(c.audience) + '</td><td>' + quota + '</td>' +
+          '<td>' + esc(c.regClose) + '</td><td>' + badge + '</td>' +
+          '<td><button class="ghost sm" onclick="openCourseForm(' + i + ')">編輯</button></td></tr>';
+      }).join('');
+      ct.innerHTML = addBtn +
+        '<table><tr><th>課名</th><th>場次</th><th>日期時間</th><th>地點</th><th>對象</th><th>名額</th><th>報名截止</th><th>狀態</th><th></th></tr>' +
+        rows + '</table>';
+    }).catch(function(e) { ct.innerHTML = '<div class="center err">錯誤：' + esc(e.message) + '</div>'; });
+  }
+
+  function openCourseForm(idx) {
+    var c = idx >= 0 ? COURSES_CACHE[idx] : null;
+    var isEdit = !!c;
+    document.getElementById('modal-title').textContent = isEdit ? '編輯課程' : '新增課程';
+    document.getElementById('modal-body').innerHTML =
+      '<table class="form-table">' +
+      frow('課名 <span class="req">*</span>', '<input id="c-name" class="finput" value="' + esc(c ? c.name : '') + '" maxlength="100">') +
+      frow('場次', '<input id="c-session" class="finput" value="' + esc(c ? c.session : '') + '" maxlength="50" placeholder="第1梯次、台北場…">') +
+      frow('開課日期', '<input id="c-date" type="date" class="finput" value="' + esc(c ? extractDate_(c.datetime) : '') + '" oninput="onCourseDateChange()">') +
+      frow('課程時間', '<input id="c-time" class="finput" value="' + esc(c ? extractTime_(c.datetime) : '') + '" maxlength="30" placeholder="09:00-12:00">') +
+      frow('地點', '<input id="c-place" class="finput" value="' + esc(c ? c.place : '') + '" maxlength="100">') +
+      frow('名額上限', '<input id="c-capacity" type="number" min="0" class="finput" value="' + esc(c ? c.capacity : 30) + '">') +
+      frow('開放對象', fsel('c-audience', ['全部','社工','老師'], c ? c.audience : '全部')) +
+      frow('社工名額', '<input id="c-swQuota" type="number" min="0" class="finput" value="' + esc(c ? c.swQuota : 0) + '" placeholder="0 = 不另設限">') +
+      frow('老師名額', '<input id="c-teQuota" type="number" min="0" class="finput" value="' + esc(c ? c.teQuota : 0) + '" placeholder="0 = 不另設限">') +
+      frow('報名開放', '<input id="c-regOpen" class="finput" value="' + esc(c ? c.regOpen : '') + '" maxlength="20" placeholder="2026/06/01">') +
+      frow('報名截止', '<input id="c-regClose" class="finput" value="' + esc(c ? c.regClose : '') + '" maxlength="20" placeholder="填開課日期自動計算">') +
+      frow('狀態', fsel('c-status', ['關閉','開放'], c ? c.status : '關閉')) +
+      '</table>' +
+      '<p class="hint err" id="c-err"></p>' +
+      '<div style="text-align:right;margin-top:10px;">' +
+      '<button class="ghost" onclick="closeModal()">取消</button> ' +
+      '<button class="action" id="c-ok">儲存</button></div>';
+    document.getElementById('modal').querySelector('.modal').style.width = '500px';
+    document.getElementById('modal').style.display = 'flex';
+    document.getElementById('c-ok').onclick = function() {
+      var name = document.getElementById('c-name').value.trim();
+      if (!name) { document.getElementById('c-err').textContent = '課名為必填'; return; }
+      var dateVal = document.getElementById('c-date').value;
+      var timeVal = document.getElementById('c-time').value.trim();
+      var datetime = dateVal ? dateVal.replace(/-/g, '/') + (timeVal ? ' ' + timeVal : '') : timeVal;
+      var btn = this; btn.disabled = true; btn.textContent = '儲存中…';
+      var payload = {
+        name: name,
+        session:  document.getElementById('c-session').value.trim(),
+        datetime: datetime,
+        place:    document.getElementById('c-place').value.trim(),
+        capacity: document.getElementById('c-capacity').value,
+        audience: document.getElementById('c-audience').value,
+        swQuota:  document.getElementById('c-swQuota').value,
+        teQuota:  document.getElementById('c-teQuota').value,
+        regOpen:  document.getElementById('c-regOpen').value.trim(),
+        regClose: document.getElementById('c-regClose').value.trim(),
+        status:   document.getElementById('c-status').value
+      };
+      if (isEdit) payload.courseId = c.courseId;
+      api(isEdit ? 'adminUpdateCourse' : 'adminCreateCourse', payload).then(function() {
+        closeModal(); loadAdminCourses();
+      }).catch(function(e) {
+        document.getElementById('c-err').textContent = e.message || e;
+        btn.disabled = false; btn.textContent = '儲存';
+      });
+    };
+  }
+
+  // 填入開課日期時，自動計算報名截止（課前10天）
+  function onCourseDateChange() {
+    var v = document.getElementById('c-date').value;
+    if (!v) return;
+    var d = new Date(v); d.setDate(d.getDate() - 10);
+    var pad = function(n) { return ('0' + n).slice(-2); };
+    document.getElementById('c-regClose').value =
+      d.getFullYear() + '/' + pad(d.getMonth() + 1) + '/' + pad(d.getDate());
+  }
+
+  // 從 datetime 字串解析日期（給 date input，格式 yyyy-MM-dd）
+  function extractDate_(dt) {
+    if (!dt) return '';
+    var m = String(dt).match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+    if (!m) return '';
+    return m[1] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[3]).slice(-2);
+  }
+  // 從 datetime 字串解析時間部分（空白後的內容）
+  function extractTime_(dt) {
+    if (!dt) return '';
+    var idx = String(dt).indexOf(' ');
+    return idx >= 0 ? dt.slice(idx + 1) : '';
   }
 
   // ===== 後台：學員管理 =====
