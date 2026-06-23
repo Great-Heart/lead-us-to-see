@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>教育訓練報名平台</title>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <style>
+    :root { --brand:#E8732B; --brand-dark:#cf6420; --bg:#fff7f1; --line:#f0d9c8; --text:#333; }
+    * { box-sizing:border-box; }
+    body { font-family:"Microsoft JhengHei","Segoe UI",sans-serif; margin:0; background:var(--bg); color:var(--text); }
+    header { background:var(--brand); color:#fff; padding:16px 20px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+    header h1 { font-size:18px; margin:0; }
+    .userbox { font-size:14px; }
+    main { max-width:880px; margin:0 auto; padding:20px; }
+    .tabs { display:flex; gap:8px; border-bottom:2px solid var(--line); margin-bottom:16px; flex-wrap:wrap; }
+    .tab { padding:10px 16px; cursor:pointer; border:none; background:none; font-size:15px; color:#888; border-bottom:3px solid transparent; margin-bottom:-2px; }
+    .tab.active { color:var(--brand-dark); border-bottom-color:var(--brand); font-weight:bold; }
+    .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:12px; }
+    .card h3 { margin:0 0 6px; color:var(--brand-dark); }
+    .meta { color:#777; font-size:14px; line-height:1.7; }
+    button.action { background:var(--brand); color:#fff; border:none; border-radius:8px; padding:8px 16px; cursor:pointer; font-size:14px; }
+    button.action:hover { background:var(--brand-dark); }
+    button.ghost { background:#fff; color:var(--brand-dark); border:1px solid var(--brand); border-radius:8px; padding:6px 12px; cursor:pointer; }
+    .status { display:inline-block; padding:2px 10px; border-radius:12px; font-size:13px; }
+    .s-待審核 { background:#fff3e0; color:#b26a00; }
+    .s-錄取 { background:#e6f4ea; color:#1e7e34; }
+    .s-候補 { background:#e8eaf6; color:#3f51b5; }
+    .s-婉拒, .s-取消 { background:#f1f1f1; color:#888; }
+    table { width:100%; border-collapse:collapse; background:#fff; }
+    th, td { border:1px solid var(--line); padding:8px; font-size:14px; text-align:left; }
+    th { background:#fbe7d6; }
+    .center { text-align:center; padding:40px 0; color:#999; }
+    .signin-wrap { text-align:center; padding:60px 0; }
+    #gbtn { display:inline-block; }
+    .hint { color:#999; font-size:13px; margin-top:10px; }
+    .err { color:#c0392b; }
+    .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; }
+    .modal { background:#fff; border-radius:10px; padding:20px; width:320px; max-width:90%; }
+    .modal input { width:100%; padding:8px; margin:8px 0; border:1px solid #ccc; border-radius:6px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>教育訓練報名平台</h1>
+    <div class="userbox" id="userbox"></div>
+  </header>
+  <main>
+    <div id="view-signin" class="signin-wrap">
+      <h2>請用 Google 帳號登入後報名</h2>
+      <div id="gbtn"></div>
+      <p class="hint">登入只做身分驗證，用來辨識你的報名與紀錄。</p>
+      <p class="hint err" id="signin-err"></p>
+    </div>
+    <div id="view-app" style="display:none;">
+      <div class="tabs">
+        <button class="tab active" data-tab="courses">課程報名</button>
+        <button class="tab" data-tab="my">我的報名</button>
+        <button class="tab" data-tab="admin" id="tab-admin" style="display:none;">後台</button>
+      </div>
+      <div id="panel"></div>
+    </div>
+  </main>
+  <div class="modal-bg" id="modal">
+    <div class="modal">
+      <h3 id="modal-title">確認報名</h3>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+<script>
+  // ===== 設定（這兩個值若有變動要同步改） =====
+  var GAS_URL = 'https://script.google.com/macros/s/AKfycbw0cb9KW6DcA0HprkxQHtpqtRQzXVtjViNxHUAfgOcjD2kmjyhiETL2LX_PqipeSHEt7g/exec';
+  var CLIENT_ID = '827349215437-1najkao8u6kcitn9rr765bu4eqhks4h3.apps.googleusercontent.com';
+
+  var ID_TOKEN = null;
+  var CURRENT = null;
+
+  // 呼叫 GAS API：用 text/plain 送 JSON，避開 CORS preflight
+  function api(action, payload) {
+    return fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: action, idToken: ID_TOKEN, payload: payload || {} })
+    }).then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!res.ok) throw new Error(res.error || '伺服器錯誤');
+        return res.data;
+      });
+  }
+
+  function onGoogleSignIn(resp) {
+    ID_TOKEN = resp.credential;
+    api('getCurrentUser').then(function (user) {
+      CURRENT = user;
+      document.getElementById('view-signin').style.display = 'none';
+      document.getElementById('view-app').style.display = 'block';
+      document.getElementById('userbox').textContent = user.name + '（' + user.email + '）';
+      if (user.isAdmin) document.getElementById('tab-admin').style.display = 'inline-block';
+      switchTab('courses');
+    }).catch(function (e) {
+      document.getElementById('signin-err').textContent = '登入失敗：' + (e.message || e);
+    });
+  }
+
+  window.onload = function () {
+    var timer = setInterval(function () {
+      if (window.google && google.accounts && google.accounts.id) {
+        clearInterval(timer);
+        google.accounts.id.initialize({ client_id: CLIENT_ID, callback: onGoogleSignIn });
+        google.accounts.id.renderButton(document.getElementById('gbtn'),
+          { theme: 'filled_blue', size: 'large', text: 'signin_with', locale: 'zh_TW' });
+      }
+    }, 200);
+  };
+
+  document.querySelectorAll('.tab').forEach(function (t) {
+    t.addEventListener('click', function () { switchTab(t.dataset.tab); });
+  });
+  function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(function (t) {
+      t.classList.toggle('active', t.dataset.tab === name);
+    });
+    if (name === 'courses') renderCourses();
+    else if (name === 'my') renderMy();
+    else if (name === 'admin') renderAdmin();
+  }
+
+  var panel = function () { return document.getElementById('panel'); };
+  function loading() { panel().innerHTML = '<div class="center">載入中…</div>'; }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>]/g, function (c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c]; }); }
+
+  function renderCourses() {
+    loading();
+    api('getOpenCourses').then(function (list) {
+      if (!list.length) { panel().innerHTML = '<div class="center">目前沒有開放報名的課程</div>'; return; }
+      panel().innerHTML = list.map(function (c) {
+        return '<div class="card"><h3>' + esc(c.name) + '</h3>' +
+          '<div class="meta">場次：' + esc(c.session) + '<br>時間：' + esc(c.datetime) +
+          '<br>地點：' + esc(c.place) + '<br>名額：' + esc(c.registered) + ' / ' + esc(c.capacity) + '</div>' +
+          '<p><button class="action" onclick="openRegister(\'' + esc(c.courseId) + '\',\'' + esc(c.name) + '\')">我要報名</button></p></div>';
+      }).join('');
+    }).catch(showErr);
+  }
+
+  function openRegister(courseId, courseName) {
+    document.getElementById('modal-title').textContent = '報名：' + courseName;
+    document.getElementById('modal-body').innerHTML =
+      '<p>聯絡電話（首次報名請填）：</p><input id="m-phone" placeholder="例如 0912345678">' +
+      '<p class="hint err" id="m-err"></p>' +
+      '<div style="text-align:right;"><button class="ghost" onclick="closeModal()">取消</button> ' +
+      '<button class="action" id="m-ok">確認報名</button></div>';
+    document.getElementById('modal').style.display = 'flex';
+    document.getElementById('m-ok').onclick = function () {
+      var phone = document.getElementById('m-phone').value.trim();
+      this.disabled = true; this.textContent = '送出中…';
+      api('registerCourse', { courseId: courseId, phone: phone }).then(function () {
+        closeModal(); alert('報名成功！狀態為「待審核」，可到「我的報名」查看。'); switchTab('my');
+      }).catch(function (e) {
+        document.getElementById('m-err').textContent = e.message || e;
+        var b = document.getElementById('m-ok'); b.disabled = false; b.textContent = '確認報名';
+      });
+    };
+  }
+  function closeModal() { document.getElementById('modal').style.display = 'none'; }
+
+  function renderMy() {
+    loading();
+    api('getMyRegistrations').then(function (list) {
+      if (!list.length) { panel().innerHTML = '<div class="center">你還沒有任何報名紀錄</div>'; return; }
+      panel().innerHTML = list.map(function (r) {
+        var cancelBtn = (r.status === '待審核' || r.status === '候補')
+          ? '<button class="ghost" onclick="cancelReg(\'' + esc(r.regId) + '\')">取消報名</button>' : '';
+        return '<div class="card"><h3>' + esc(r.courseName) + '</h3>' +
+          '<div class="meta">時間：' + esc(r.datetime) + '<br>報名時間：' + esc(r.regTime) + '</div>' +
+          '<p><span class="status s-' + esc(r.status) + '">' + esc(r.status) + '</span> ' + cancelBtn + '</p></div>';
+      }).join('');
+    }).catch(showErr);
+  }
+  function cancelReg(regId) {
+    if (!confirm('確定取消這筆報名？')) return;
+    api('cancelMyRegistration', { regId: regId }).then(function () { renderMy(); }).catch(showErr);
+  }
+
+  function renderAdmin() {
+    loading();
+    api('adminGetCourses').then(function (courses) {
+      var opts = '<option value="">全部課程</option>' + courses.map(function (c) {
+        return '<option value="' + esc(c.courseId) + '">' + esc(c.name) + '（' + esc(c.status) + '）</option>';
+      }).join('');
+      panel().innerHTML = '<p>課程：<select id="adm-course" onchange="loadAdminRegs()">' + opts + '</select></p><div id="adm-table"></div>';
+      loadAdminRegs();
+    }).catch(showErr);
+  }
+  function loadAdminRegs() {
+    var courseId = document.getElementById('adm-course').value;
+    document.getElementById('adm-table').innerHTML = '<div class="center">載入中…</div>';
+    api('adminGetRegistrations', { courseId: courseId }).then(function (list) {
+      if (!list.length) { document.getElementById('adm-table').innerHTML = '<div class="center">沒有報名資料</div>'; return; }
+      var rows = list.map(function (r) {
+        return '<tr><td>' + esc(r.name) + '</td><td>' + esc(r.email) + '</td><td>' + esc(r.phone) +
+          '</td><td>' + esc(r.points) + '</td><td>' + esc(r.regTime) +
+          '</td><td><span class="status s-' + esc(r.status) + '">' + esc(r.status) + '</span></td></tr>';
+      }).join('');
+      document.getElementById('adm-table').innerHTML =
+        '<table><tr><th>姓名</th><th>Email</th><th>電話</th><th>累計記點</th><th>報名時間</th><th>狀態</th></tr>' + rows + '</table>';
+    }).catch(showErr);
+  }
+
+  function showErr(e) { panel().innerHTML = '<div class="center err">發生錯誤：' + esc(e.message || e) + '</div>'; }
+</script>
+</body>
+</html>
