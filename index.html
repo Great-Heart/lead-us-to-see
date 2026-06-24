@@ -62,7 +62,11 @@
     .subtabs { display:flex; gap:6px; margin-bottom:12px; }
     .subtab { padding:7px 14px; border:1px solid var(--line); border-radius:8px; cursor:pointer; font-size:14px; background:#fff; color:#666; }
     .subtab.active { background:var(--brand); color:#fff; border-color:var(--brand); }
-  </style>
+    .sk { background:linear-gradient(90deg,#f0e6dc 25%,#f7efe7 37%,#f0e6dc 63%); background-size:400% 100%; border-radius:6px; animation:sk 1.2s ease-in-out infinite; }
+    .sk-title { height:18px; width:45%; margin-bottom:12px; }
+    .sk-line { height:13px; width:85%; margin:7px 0; }
+    @keyframes sk { 0%{background-position:100% 0} 100%{background-position:0 0} }
+</style>
 </head>
 <body>
   <header>
@@ -104,7 +108,8 @@
   var ADMIN_VIEW   = 'regs';
 
   // 前端記憶體快取：切分頁先秒顯示舊資料，再背景更新；寫入後設 null 失效
-  var CACHE = { openCourses: null, profile: null, courses: null };
+  var CACHE = { openCourses: null, profile: null, courses: null, myRegs: null };
+  var BOOTSTRAPPED = false; // 登入剛抓過首屏資料，第一次進課程頁不必再背景重抓
 
   function api(action, payload) {
     return fetch(GAS_URL, {
@@ -117,15 +122,19 @@
 
   function onGoogleSignIn(resp) {
     ID_TOKEN = resp.credential;
-    api('getCurrentUser').then(function(user) {
-      CURRENT = user;
-      PROFILE_OK = !!user.profileComplete;
+    // 一趟 bootstrap 取回 使用者+個資+開放課程，首屏直接秒畫
+    api('bootstrap').then(function(b) {
+      CURRENT = b.user;
+      PROFILE_OK = !!b.user.profileComplete;
+      CACHE.profile = b.profile;
+      CACHE.openCourses = b.openCourses;
+      BOOTSTRAPPED = true;
       document.getElementById('view-signin').style.display = 'none';
       document.getElementById('view-app').style.display = 'block';
       document.getElementById('userbox').innerHTML =
-        '<span>' + esc(user.name || user.email) + '</span>' +
+        '<span>' + esc(b.user.name || b.user.email) + '</span>' +
         '<button class="logout" onclick="logout()">登出</button>';
-      if (user.isAdmin) document.getElementById('tab-admin').style.display = 'inline-block';
+      if (b.user.isAdmin) document.getElementById('tab-admin').style.display = 'inline-block';
       applyProfileGate();
     }).catch(function(e) {
       document.getElementById('signin-err').textContent = '登入失敗：' + (e.message || e);
@@ -146,8 +155,8 @@
     if (window.google && google.accounts && google.accounts.id) {
       google.accounts.id.disableAutoSelect();
     }
-    ID_TOKEN = null; CURRENT = null; PROFILE_OK = false;
-    CACHE = { openCourses: null, profile: null, courses: null };
+    ID_TOKEN = null; CURRENT = null; PROFILE_OK = false; BOOTSTRAPPED = false;
+    CACHE = { openCourses: null, profile: null, courses: null, myRegs: null };
     document.getElementById('view-app').style.display = 'none';
     document.getElementById('view-signin').style.display = 'block';
     document.getElementById('signin-err').textContent = '';
@@ -183,6 +192,12 @@
 
   var panel = function() { return document.getElementById('panel'); };
   function loading() { panel().innerHTML = '<div class="center">載入中…</div>'; }
+  // 骨架卡片：取代空白「載入中」閃爍，讓等待時版面先成形
+  function skeleton(n) {
+    var card = '<div class="card"><div class="sk sk-title"></div>' +
+      '<div class="sk sk-line"></div><div class="sk sk-line" style="width:60%"></div></div>';
+    return new Array((n || 3) + 1).join(card);
+  }
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"]/g, function(c) {
       return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c];
@@ -191,9 +206,12 @@
 
   // ===== 課程報名 =====
   function renderCourses() {
-    // 有快取就先秒顯示，再背景更新；沒有才顯示「載入中」
+    // 有快取就先秒顯示，再背景更新；沒有才顯示骨架
     if (CACHE.openCourses) paintCourses(CACHE.openCourses);
-    else loading();
+    else panel().innerHTML = skeleton(3);
+    // 登入剛用 bootstrap 抓過開放課程且快取仍在，第一次進來不必再背景重抓；
+    // 若快取已被作廢（例如剛存個資改了領域）就照常重抓
+    if (BOOTSTRAPPED) { BOOTSTRAPPED = false; if (CACHE.openCourses) return; }
     api('getOpenCourses').then(function(list) {
       CACHE.openCourses = list;
       paintCourses(list);
@@ -238,6 +256,7 @@
       api('registerCourse', { courseId: courseId }).then(function(res) {
         closeModal();
         CACHE.openCourses = null; // 名額/狀態已變，下次重新抓
+        CACHE.myRegs = null;      // 多了一筆報名，我的報名需重抓
         var st = (res && res.status) || '待審核';
         var msg = st === '錄取' ? '報名成功，已直接錄取！'
                 : st === '候補' ? '報名成功，目前名額已滿，列為候補。'
@@ -257,22 +276,32 @@
 
   // ===== 我的報名 =====
   function renderMy() {
-    loading();
+    // 有快取先秒顯示，再背景更新；沒有才顯示骨架
+    if (CACHE.myRegs) paintMy(CACHE.myRegs);
+    else panel().innerHTML = skeleton(2);
     api('getMyRegistrations').then(function(list) {
-      if (!list.length) { panel().innerHTML = '<div class="center">你還沒有任何報名紀錄</div>'; return; }
-      panel().innerHTML = list.map(function(r) {
-        var cancelBtn = (r.status === '待審核' || r.status === '候補')
-          ? '<button class="ghost sm" onclick="cancelReg(\'' + esc(r.regId) + '\')">取消報名</button>' : '';
-        return '<div class="card"><h3>' + esc(r.courseName) + '</h3>' +
-          '<div class="meta">時間：' + esc(r.datetime) + '　服務領域：' + esc(r.identity || '—') +
-          '<br>報名時間：' + esc(r.regTime) + '</div>' +
-          '<p><span class="status s-' + esc(r.status) + '">' + esc(r.status) + '</span> ' + cancelBtn + '</p></div>';
-      }).join('');
-    }).catch(showErr);
+      CACHE.myRegs = list;
+      paintMy(list);
+    }).catch(function(e) { if (!CACHE.myRegs) showErr(e); });
+  }
+  function paintMy(list) {
+    if (!list.length) { panel().innerHTML = '<div class="center">你還沒有任何報名紀錄</div>'; return; }
+    panel().innerHTML = list.map(function(r) {
+      var cancelBtn = (r.status === '待審核' || r.status === '候補')
+        ? '<button class="ghost sm" onclick="cancelReg(\'' + esc(r.regId) + '\')">取消報名</button>' : '';
+      return '<div class="card"><h3>' + esc(r.courseName) + '</h3>' +
+        '<div class="meta">時間：' + esc(r.datetime) + '　服務領域：' + esc(r.identity || '—') +
+        '<br>報名時間：' + esc(r.regTime) + '</div>' +
+        '<p><span class="status s-' + esc(r.status) + '">' + esc(r.status) + '</span> ' + cancelBtn + '</p></div>';
+    }).join('');
   }
   function cancelReg(regId) {
     if (!confirm('確定取消這筆報名？')) return;
-    api('cancelMyRegistration', { regId: regId }).then(function() { renderMy(); }).catch(showErr);
+    api('cancelMyRegistration', { regId: regId }).then(function() {
+      CACHE.myRegs = null;     // 狀態已變，重新抓
+      CACHE.openCourses = null; // 名額可能釋出
+      renderMy();
+    }).catch(showErr);
   }
 
   // ===== 個人資料 =====
